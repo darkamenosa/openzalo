@@ -106,11 +106,71 @@ export async function runOpenzca(args: string[], options?: ZcaRunOptions): Promi
         let stdout = "";
         let stderr = "";
         let timedOut = false;
+        let settled = false;
+        let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+        let sigkillTimer: ReturnType<typeof setTimeout> | null = null;
+        let forceResolveTimer: ReturnType<typeof setTimeout> | null = null;
+        const timeoutMessage = `Command timed out after ${timeout}ms`;
 
-        const timer = setTimeout(() => {
+        const clearTimers = () => {
+          if (timeoutTimer) {
+            clearTimeout(timeoutTimer);
+            timeoutTimer = null;
+          }
+          if (sigkillTimer) {
+            clearTimeout(sigkillTimer);
+            sigkillTimer = null;
+          }
+          if (forceResolveTimer) {
+            clearTimeout(forceResolveTimer);
+            forceResolveTimer = null;
+          }
+        };
+
+        const settle = (result: ZcaResult): void => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          clearTimers();
+          resolve(result);
+        };
+
+        const triggerTimeout = () => {
+          if (settled) {
+            return;
+          }
           timedOut = true;
-          proc.kill("SIGTERM");
-        }, timeout);
+          try {
+            proc.kill("SIGTERM");
+          } catch {
+            // Ignore kill errors and rely on force-resolve timer below.
+          }
+          sigkillTimer = setTimeout(() => {
+            if (settled) {
+              return;
+            }
+            try {
+              proc.kill("SIGKILL");
+            } catch {
+              // Ignore SIGKILL errors and rely on force-resolve timer below.
+            }
+          }, 5000);
+          forceResolveTimer = setTimeout(() => {
+            if (settled) {
+              return;
+            }
+            const trimmedStderr = stderr.trim();
+            settle({
+              ok: false,
+              stdout: stdout.trim(),
+              stderr: trimmedStderr ? `${trimmedStderr}\n${timeoutMessage}` : timeoutMessage,
+              exitCode: 124,
+            });
+          }, 10000);
+        };
+
+        timeoutTimer = setTimeout(triggerTimeout, timeout);
 
         proc.stdout?.on("data", (data: Buffer) => {
           stdout += data.toString();
@@ -121,27 +181,27 @@ export async function runOpenzca(args: string[], options?: ZcaRunOptions): Promi
         });
 
         proc.on("close", (code) => {
-          clearTimeout(timer);
+          const trimmedStdout = stdout.trim();
+          const trimmedStderr = stderr.trim();
           if (timedOut) {
-            resolve({
+            settle({
               ok: false,
-              stdout,
-              stderr: stderr || "Command timed out",
-              exitCode: code ?? 124,
+              stdout: trimmedStdout,
+              stderr: trimmedStderr || timeoutMessage,
+              exitCode: 124,
             });
             return;
           }
-          resolve({
+          settle({
             ok: code === 0,
-            stdout: stdout.trim(),
-            stderr: stderr.trim(),
+            stdout: trimmedStdout,
+            stderr: trimmedStderr,
             exitCode: code ?? 1,
           });
         });
 
         proc.on("error", (err) => {
-          clearTimeout(timer);
-          resolve({
+          settle({
             ok: false,
             stdout: "",
             stderr: err.message,
