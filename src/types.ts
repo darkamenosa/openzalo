@@ -43,12 +43,14 @@ export type ZcaMessage = {
   msgId?: string;
   cliMsgId?: string;
   type: number;
+  chatType?: string;
   content: string;
   timestamp: number;
   mentions?: ZcaMention[];
   mentionIds?: string[];
   metadata?: {
     isGroup: boolean;
+    chatType?: string;
     threadName?: string;
     senderName?: string;
     senderDisplayName?: string;

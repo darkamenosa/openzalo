@@ -125,6 +125,35 @@ channels:
         profile: work
 ```
 
+### Default Behavior (When `channels.openzalo` Is Missing)
+
+If plugin `openzalo` is enabled but `channels.openzalo` is not set in config, runtime defaults are:
+
+- `dmPolicy: pairing`
+- `groupPolicy: open`
+- `groupRequireMention: true`
+- `groupMentionDetectionFailure: deny`
+- `sendFailureNotice: true`
+
+Behavior summary:
+
+- Direct chat (DM): unknown users do not get normal bot replies; they receive pairing flow first.
+- Group chat: bot replies only when explicitly mentioned.
+- Mention detection: uses structured mention IDs from inbound payload (`mentionIds` / `mentions[].uid`) matched against bot user id.
+- If mention detection is unavailable while mention is required: message is denied by default.
+- Authorized control commands can bypass mention gating.
+
+Recommended explicit config (to avoid cross-machine ambiguity):
+
+```yaml
+channels:
+  openzalo:
+    dmPolicy: pairing
+    groupPolicy: open
+    groupRequireMention: true
+    groupMentionDetectionFailure: deny
+```
+
 ## Commands
 
 ### Authentication

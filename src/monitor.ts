@@ -251,15 +251,13 @@ function normalizeMentionUid(value: unknown): string | undefined {
   return undefined;
 }
 
-function extractMentionIds(message: ZcaMessage): { mentionIds: string[]; hasStructuredMentionData: boolean } {
+function extractMentionIds(message: ZcaMessage): string[] {
   const ids = new Set<string>();
-  let hasStructuredMentionData = false;
 
   const collectMentionIds = (value: unknown): void => {
     if (!Array.isArray(value)) {
       return;
     }
-    hasStructuredMentionData = true;
     for (const item of value) {
       const uid = normalizeMentionUid(item);
       if (uid) {
@@ -272,7 +270,6 @@ function extractMentionIds(message: ZcaMessage): { mentionIds: string[]; hasStru
     if (!Array.isArray(value)) {
       return;
     }
-    hasStructuredMentionData = true;
     for (const item of value) {
       if (!item || typeof item !== "object") {
         continue;
@@ -289,7 +286,25 @@ function extractMentionIds(message: ZcaMessage): { mentionIds: string[]; hasStru
   collectMentionIds(message.metadata?.mentionIds);
   collectMentions(message.metadata?.mentions);
 
-  return { mentionIds: Array.from(ids), hasStructuredMentionData };
+  return Array.from(ids);
+}
+
+function inferIsGroupMessage(message: ZcaMessage): boolean {
+  if (typeof message.metadata?.isGroup === "boolean") {
+    return message.metadata.isGroup;
+  }
+  const chatTypeRaw = message.chatType ?? message.metadata?.chatType;
+  if (typeof chatTypeRaw === "string") {
+    const normalized = chatTypeRaw.trim().toLowerCase();
+    if (normalized === "group") {
+      return true;
+    }
+    if (normalized === "user" || normalized === "direct" || normalized === "dm") {
+      return false;
+    }
+  }
+  // openzca commonly emits type=1 for group thread events.
+  return message.type === 1;
 }
 
 async function resolveOpenzcaUserId(
@@ -392,7 +407,7 @@ async function processMessage(
     return;
   }
 
-  const isGroup = metadata?.isGroup ?? false;
+  const isGroup = inferIsGroupMessage(message);
   const senderId = metadata?.fromId ?? threadId;
   const senderName = metadata?.senderName ?? "";
   const groupName = metadata?.threadName ?? "";
@@ -507,14 +522,12 @@ async function processMessage(
     },
   });
 
-  const mentionInfo = extractMentionIds(message);
+  const mentionIds = extractMentionIds(message);
   const normalizedBotUserId = normalizeMentionUid(botUserId);
-  const canDetectMentionByUid = Boolean(
-    isGroup && normalizedBotUserId && mentionInfo.hasStructuredMentionData,
-  );
+  const canDetectMentionByUid = Boolean(isGroup && normalizedBotUserId);
   const wasMentionedByUid =
     canDetectMentionByUid && normalizedBotUserId
-      ? mentionInfo.mentionIds.includes(normalizedBotUserId)
+      ? mentionIds.includes(normalizedBotUserId)
       : false;
   const shouldRequireMention = isGroup
       ? core.channel.groups.resolveRequireMention({
@@ -628,7 +641,7 @@ async function processMessage(
         return;
       }
     } else {
-      const mode = account.config.groupMentionDetectionFailure ?? "allow-with-warning";
+      const mode = account.config.groupMentionDetectionFailure ?? "deny";
       const warningKey = `${account.accountId}:${chatId}:mention-detection:${mode}`;
       if (!mentionDetectionFailureWarnings?.has(warningKey)) {
         if (mode === "allow-with-warning") {
