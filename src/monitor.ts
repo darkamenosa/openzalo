@@ -28,7 +28,6 @@ import { getOpenzaloRuntime } from "./runtime.js";
 import { sendMessageOpenzalo, sendTypingOpenzalo } from "./send.js";
 import { parseJsonOutput, runOpenzca, runOpenzcaStreaming } from "./openzca.js";
 import {
-  OPENZALO_DEFAULT_DM_INBOUND_DEBOUNCE_MS,
   OPENZALO_DEFAULT_FAILURE_NOTICE_MESSAGE,
   OPENZALO_TEXT_LIMIT,
 } from "./constants.js";
@@ -423,120 +422,6 @@ function resolveMediaContext(message: ZcaMessage): ResolvedOpenzaloMediaContext 
   };
 }
 
-function resolveOpenzaloInboundDebounceMs(
-  config: OpenClawConfig,
-  core: OpenzaloCoreRuntime,
-): number {
-  const inbound = config.messages?.inbound;
-  const hasExplicitDebounce =
-    typeof inbound?.debounceMs === "number" ||
-    typeof inbound?.byChannel?.["openzalo"] === "number";
-  if (!hasExplicitDebounce) {
-    return OPENZALO_DEFAULT_DM_INBOUND_DEBOUNCE_MS;
-  }
-  return core.channel.debounce.resolveInboundDebounceMs({ cfg: config, channel: "openzalo" });
-}
-
-function combineOpenzaloDebouncedMessages(messages: ZcaMessage[]): ZcaMessage {
-  if (messages.length === 0) {
-    throw new Error("Cannot combine empty message batch");
-  }
-  if (messages.length === 1) {
-    return messages[0];
-  }
-
-  const first = messages[0];
-  const last = messages[messages.length - 1];
-
-  const seenBodies = new Set<string>();
-  const bodyParts: string[] = [];
-  for (const message of messages) {
-    const body = normalizeStringValue(message.content);
-    if (!body) {
-      continue;
-    }
-    const normalized = body.toLowerCase();
-    if (seenBodies.has(normalized)) {
-      continue;
-    }
-    seenBodies.add(normalized);
-    bodyParts.push(body);
-  }
-  const mergedBody = bodyParts.join("\n").trim();
-
-  const mediaContexts = messages.map((message) => resolveMediaContext(message));
-  const mediaPaths = collectUniqueStrings(
-    ...mediaContexts.map((context) => context.mediaPaths),
-    ...mediaContexts.map((context) => context.mediaPath),
-  );
-  const mediaUrls = collectUniqueStrings(
-    ...mediaContexts.map((context) => context.mediaUrls),
-    ...mediaContexts.map((context) => context.mediaUrl),
-  );
-  const mediaTypes = collectUniqueStrings(
-    ...mediaContexts.map((context) => context.mediaTypes),
-    ...mediaContexts.map((context) => context.mediaType),
-  );
-  const mentionIds = collectUniqueStrings(
-    ...messages.map((message) => message.mentionIds),
-    ...messages.map((message) => message.metadata?.mentionIds),
-  );
-  const mergedMentions = messages.flatMap((message) => [
-    ...(Array.isArray(message.mentions) ? message.mentions : []),
-    ...(Array.isArray(message.metadata?.mentions) ? message.metadata.mentions : []),
-  ]);
-
-  const mergedTimestamp = messages.reduce((latest, message) => {
-    if (
-      typeof message.timestamp === "number" &&
-      Number.isFinite(message.timestamp) &&
-      message.timestamp > latest
-    ) {
-      return message.timestamp;
-    }
-    return latest;
-  }, 0);
-  const mergedMsgId = [...messages]
-    .reverse()
-    .map((message) => normalizeStringValue(message.msgId))
-    .find((value): value is string => Boolean(value));
-  const mergedCliMsgId = [...messages]
-    .reverse()
-    .map((message) => normalizeStringValue(message.cliMsgId))
-    .find((value): value is string => Boolean(value));
-
-  return {
-    ...first,
-    ...last,
-    content: mergedBody || last.content || first.content,
-    timestamp: mergedTimestamp > 0 ? mergedTimestamp : last.timestamp,
-    msgId: mergedMsgId ?? last.msgId,
-    cliMsgId: mergedCliMsgId ?? last.cliMsgId,
-    mediaPath: mediaPaths[0],
-    mediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
-    mediaUrl: mediaUrls[0],
-    mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
-    mediaType: mediaTypes[0],
-    mediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
-    mentionIds: mentionIds.length > 0 ? mentionIds : undefined,
-    mentions: mergedMentions.length > 0 ? mergedMentions : undefined,
-    metadata: {
-      ...first.metadata,
-      ...last.metadata,
-      mediaPath: mediaPaths[0],
-      mediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
-      mediaUrl: mediaUrls[0],
-      mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
-      mediaType: mediaTypes[0],
-      mediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
-      mentionIds: mentionIds.length > 0 ? mentionIds : undefined,
-      mentionCount:
-        mentionIds.length > 0 ? mentionIds.length : (last.metadata?.mentionCount ?? undefined),
-      mentions: mergedMentions.length > 0 ? mergedMentions : last.metadata?.mentions,
-    },
-  };
-}
-
 type ResolvedOpenzaloQuoteContext = {
   hasQuote: boolean;
   replyToId?: string;
@@ -680,6 +565,14 @@ async function startOpenzcaListener(
   abortSignal: AbortSignal,
 ): Promise<ChildProcess> {
   let buffer = "";
+  let reportedTermination = false;
+  const reportTermination = (err: Error): void => {
+    if (reportedTermination) {
+      return;
+    }
+    reportedTermination = true;
+    onError(err);
+  };
 
   const { proc, promise } = await runOpenzcaStreaming(["listen", "-r", "-k"], {
     profile,
@@ -700,7 +593,9 @@ async function startOpenzcaListener(
         }
       }
     },
-    onError,
+    onError: (err) => {
+      reportTermination(err);
+    },
   });
 
   proc.stderr?.on("data", (data: Buffer) => {
@@ -720,9 +615,11 @@ async function startOpenzcaListener(
   });
 
   void promise.then((result) => {
-    if (!result.ok && !abortSignal.aborted) {
-      onError(new Error(result.stderr || `openzca listen exited with code ${result.exitCode}`));
+    if (abortSignal.aborted) {
+      return;
     }
+    const reason = result.stderr?.trim() || `openzca listen exited with code ${result.exitCode}`;
+    reportTermination(new Error(reason));
   });
 
   abortSignal.addEventListener(
@@ -868,7 +765,7 @@ async function processMessage(
 
   const peer = isGroup
     ? { kind: "group" as const, id: chatId }
-    : { kind: "group" as const, id: senderId };
+    : { kind: "direct" as const, id: senderId };
 
   const route = core.channel.routing.resolveAgentRoute({
     cfg: config,
@@ -1440,9 +1337,6 @@ export async function monitorOpenzaloProvider(
     );
   }
   logVerbose(core, runtime, `[${account.accountId}] group history limit=${historyLimit}`);
-  const dmInboundDebounceMs = resolveOpenzaloInboundDebounceMs(config, core);
-  logVerbose(core, runtime, `[${account.accountId}] dm inbound debounce=${dmInboundDebounceMs}ms`);
-
   const processInboundMessage = async (msg: ZcaMessage): Promise<void> => {
     await processMessage(
       msg,
@@ -1485,57 +1379,6 @@ export async function monitorOpenzaloProvider(
     groupConversationLanes.set(laneKey, next);
   };
 
-  const dmInboundDebouncer = core.channel.debounce.createInboundDebouncer<ZcaMessage>({
-    debounceMs: dmInboundDebounceMs,
-    buildKey: (message) => {
-      if (inferIsGroupMessage(message)) {
-        return null;
-      }
-      const threadId = normalizeStringValue(message.threadId) ?? "unknown";
-      const senderId =
-        normalizeStringValue(message.metadata?.fromId) ??
-        normalizeStringValue(message.metadata?.senderId) ??
-        normalizeStringValue(message.senderId) ??
-        threadId;
-      return `openzalo:${account.accountId}:dm:${threadId}:sender:${senderId}`;
-    },
-    shouldDebounce: (message) => {
-      if (inferIsGroupMessage(message)) {
-        return false;
-      }
-      const body = normalizeStringValue(message.content) ?? "";
-      if (!body) {
-        return true;
-      }
-      if (parseHumanPassCommand(body)) {
-        return false;
-      }
-      if (core.channel.commands.isControlCommandMessage(body, config)) {
-        return false;
-      }
-      return true;
-    },
-    onFlush: async (messages) => {
-      if (messages.length === 0) {
-        return;
-      }
-      const merged =
-        messages.length > 1 ? combineOpenzaloDebouncedMessages(messages) : messages[0];
-      if (messages.length > 1) {
-        const threadId = normalizeStringValue(merged.threadId) ?? "unknown";
-        logVerbose(
-          core,
-          runtime,
-          `[${account.accountId}] coalesced ${messages.length} DM events thread=${threadId}`,
-        );
-      }
-      await processInboundMessage(merged);
-    },
-    onError: (err) => {
-      runtime.error(`[${account.accountId}] openzalo DM debounce flush failed: ${String(err)}`);
-    },
-  });
-
   const stop = () => {
     stopped = true;
     if (restartTimer) {
@@ -1571,18 +1414,18 @@ export async function monitorOpenzaloProvider(
           enqueueGroupMessage(msg);
           return;
         }
-        void dmInboundDebouncer.enqueue(msg).catch((err) => {
-          runtime.error(`[${account.accountId}] Failed to enqueue DM message: ${String(err)}`);
+        void processInboundMessage(msg).catch((err) => {
+          runtime.error(`[${account.accountId}] Failed to process DM message: ${String(err)}`);
         });
       },
       (err) => {
-        runtime.error(`[${account.accountId}] openzca listener error: ${String(err)}`);
-        if (!stopped && !abortSignal.aborted) {
-          logVerbose(core, runtime, `[${account.accountId}] restarting listener in 5s...`);
-          restartTimer = setTimeout(startListener, 5000);
-        } else {
+        if (stopped || abortSignal.aborted) {
           resolveRunning?.();
+          return;
         }
+        runtime.error(`[${account.accountId}] openzca listener stopped: ${String(err)}`);
+        logVerbose(core, runtime, `[${account.accountId}] restarting listener in 5s...`);
+        restartTimer = setTimeout(startListener, 5000);
       },
       abortSignal,
     )
@@ -1591,13 +1434,13 @@ export async function monitorOpenzaloProvider(
       })
       .catch((err) => {
         const listenerError = err instanceof Error ? err : new Error(String(err));
-        runtime.error(`[${account.accountId}] openzca listener error: ${String(listenerError)}`);
-        if (!stopped && !abortSignal.aborted) {
-          logVerbose(core, runtime, `[${account.accountId}] restarting listener in 5s...`);
-          restartTimer = setTimeout(startListener, 5000);
-        } else {
+        if (stopped || abortSignal.aborted) {
           resolveRunning?.();
+          return;
         }
+        runtime.error(`[${account.accountId}] openzca listener failed to start: ${String(listenerError)}`);
+        logVerbose(core, runtime, `[${account.accountId}] restarting listener in 5s...`);
+        restartTimer = setTimeout(startListener, 5000);
       });
   };
 
