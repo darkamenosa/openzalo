@@ -1,10 +1,19 @@
 import type { ChildProcess } from "node:child_process";
-import type { OpenClawConfig, MarkdownTableMode, RuntimeEnv } from "openclaw/plugin-sdk";
+import type {
+  OpenClawConfig,
+  MarkdownTableMode,
+  RuntimeEnv,
+  HistoryEntry,
+} from "openclaw/plugin-sdk";
 import {
+  buildPendingHistoryContextFromMap,
+  clearHistoryEntriesIfEnabled,
   createReplyPrefixOptions,
   createTypingCallbacks,
+  DEFAULT_GROUP_HISTORY_LIMIT,
   logTypingFailure,
   mergeAllowlist,
+  recordPendingHistoryEntryIfEnabled,
   resolveChannelMediaMaxBytes,
   summarizeMapping,
 } from "openclaw/plugin-sdk";
@@ -307,6 +316,225 @@ function inferIsGroupMessage(message: ZcaMessage): boolean {
   return message.type === 1;
 }
 
+function normalizeStringValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function collectUniqueStrings(...values: unknown[]): string[] {
+  const unique = new Set<string>();
+  const add = (value: unknown): void => {
+    const normalized = normalizeStringValue(value);
+    if (normalized) {
+      unique.add(normalized);
+    }
+  };
+
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        add(item);
+      }
+      continue;
+    }
+    add(value);
+  }
+
+  return Array.from(unique);
+}
+
+type ResolvedOpenzaloMediaContext = {
+  mediaPath?: string;
+  mediaPaths?: string[];
+  mediaUrl?: string;
+  mediaUrls?: string[];
+  mediaType?: string;
+  mediaTypes?: string[];
+};
+
+function resolveMediaContext(message: ZcaMessage): ResolvedOpenzaloMediaContext {
+  const messageMediaPaths = collectUniqueStrings(
+    message.mediaPaths,
+    message.metadata?.mediaPaths,
+    message.mediaPath,
+    message.metadata?.mediaPath,
+  );
+  const messageMediaUrls = collectUniqueStrings(
+    message.mediaUrls,
+    message.metadata?.mediaUrls,
+    message.mediaUrl,
+    message.metadata?.mediaUrl,
+  );
+  const messageMediaTypes = collectUniqueStrings(
+    message.mediaTypes,
+    message.metadata?.mediaTypes,
+    message.mediaType,
+    message.metadata?.mediaType,
+  );
+
+  const quoteMediaPaths = collectUniqueStrings(
+    message.quoteMediaPaths,
+    message.metadata?.quoteMediaPaths,
+    message.quote?.mediaPaths,
+    message.metadata?.quote?.mediaPaths,
+    message.quoteMediaPath,
+    message.metadata?.quoteMediaPath,
+    message.quote?.mediaPath,
+    message.metadata?.quote?.mediaPath,
+  );
+  const quoteMediaUrls = collectUniqueStrings(
+    message.quoteMediaUrls,
+    message.metadata?.quoteMediaUrls,
+    message.quote?.mediaUrls,
+    message.metadata?.quote?.mediaUrls,
+    message.quoteMediaUrl,
+    message.metadata?.quoteMediaUrl,
+    message.quote?.mediaUrl,
+    message.metadata?.quote?.mediaUrl,
+  );
+  const quoteMediaTypes = collectUniqueStrings(
+    message.quoteMediaTypes,
+    message.metadata?.quoteMediaTypes,
+    message.quote?.mediaTypes,
+    message.metadata?.quote?.mediaTypes,
+    message.quoteMediaType,
+    message.metadata?.quoteMediaType,
+    message.quote?.mediaType,
+    message.metadata?.quote?.mediaType,
+  );
+  const mediaPaths = collectUniqueStrings(messageMediaPaths, quoteMediaPaths);
+  const mediaUrls = collectUniqueStrings(messageMediaUrls, quoteMediaUrls);
+  const mediaTypes = collectUniqueStrings(messageMediaTypes, quoteMediaTypes);
+
+  return {
+    mediaPath: mediaPaths[0],
+    mediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
+    mediaUrl: mediaUrls[0],
+    mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+    mediaType: mediaTypes[0],
+    mediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
+  };
+}
+
+type ResolvedOpenzaloQuoteContext = {
+  hasQuote: boolean;
+  replyToId?: string;
+  replyToIdFull?: string;
+  replyToBody?: string;
+  replyToSender?: string;
+};
+
+function resolveQuoteContext(message: ZcaMessage): ResolvedOpenzaloQuoteContext {
+  const quote = message.quote ?? message.metadata?.quote;
+  const replyToId = normalizeStringValue(quote?.cliMsgId);
+  const replyToIdFull = normalizeStringValue(quote?.globalMsgId) ?? replyToId;
+  const replyToBody = normalizeStringValue(quote?.msg);
+  const replyToSender = normalizeStringValue(quote?.senderName) ?? normalizeStringValue(quote?.ownerId);
+  const hasQuoteMedia =
+    collectUniqueStrings(
+      message.quoteMediaPaths,
+      message.metadata?.quoteMediaPaths,
+      message.quoteMediaUrls,
+      message.metadata?.quoteMediaUrls,
+      message.quoteMediaPath,
+      message.metadata?.quoteMediaPath,
+      message.quoteMediaUrl,
+      message.metadata?.quoteMediaUrl,
+    ).length > 0;
+
+  return {
+    hasQuote: Boolean(quote || replyToId || replyToBody || replyToSender || hasQuoteMedia),
+    replyToId,
+    replyToIdFull,
+    replyToBody,
+    replyToSender,
+  };
+}
+
+function resolveMediaKind(mediaType?: string): string | undefined {
+  if (!mediaType) {
+    return undefined;
+  }
+  const normalized = mediaType.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "image" || normalized.startsWith("image/")) {
+    return "image";
+  }
+  if (normalized === "video" || normalized.startsWith("video/")) {
+    return "video";
+  }
+  if (
+    normalized === "audio" ||
+    normalized === "voice" ||
+    normalized.startsWith("audio/") ||
+    normalized.includes("voice")
+  ) {
+    return "audio";
+  }
+  return "attachment";
+}
+
+function buildPendingHistoryEntry(params: {
+  senderName: string;
+  rawBody: string;
+  quoteContext: ResolvedOpenzaloQuoteContext;
+  mediaContext: ResolvedOpenzaloMediaContext;
+  timestamp?: number;
+  messageId?: string;
+}): HistoryEntry | null {
+  const bodyParts: string[] = [];
+  if (params.rawBody) {
+    bodyParts.push(params.rawBody);
+  }
+
+  if (!params.rawBody && params.quoteContext.replyToBody) {
+    bodyParts.push(`[quote] ${params.quoteContext.replyToBody}`);
+  }
+
+  const mediaType = params.mediaContext.mediaType ?? params.mediaContext.mediaTypes?.[0];
+  const mediaKind = resolveMediaKind(mediaType);
+  const hasMediaRef = Boolean(params.mediaContext.mediaPath || params.mediaContext.mediaUrl);
+  if (hasMediaRef || mediaKind) {
+    const mediaTokens = [`<media:${mediaKind ?? "attachment"}>`];
+    if (params.mediaContext.mediaPath) {
+      mediaTokens.push(`path:${params.mediaContext.mediaPath}`);
+    }
+    if (params.mediaContext.mediaUrl) {
+      mediaTokens.push(`url:${params.mediaContext.mediaUrl}`);
+    }
+    bodyParts.push(mediaTokens.join(" "));
+  }
+
+  const body = bodyParts.join("\n").trim();
+  if (!body) {
+    return null;
+  }
+
+  return {
+    sender: params.senderName.trim() || "unknown",
+    body,
+    timestamp: typeof params.timestamp === "number" ? params.timestamp * 1000 : undefined,
+    messageId: params.messageId,
+  };
+}
+
+function resolveOpenzaloHistoryLimit(params: {
+  config: OpenClawConfig;
+  account: ResolvedOpenzaloAccount;
+}): number {
+  const configured =
+    params.account.config.historyLimit ?? params.config.messages?.groupChat?.historyLimit;
+  if (typeof configured === "number" && Number.isFinite(configured)) {
+    return Math.max(0, Math.floor(configured));
+  }
+  return DEFAULT_GROUP_HISTORY_LIMIT;
+}
+
 async function resolveOpenzcaUserId(
   profile: string,
   runtime: RuntimeEnv,
@@ -397,19 +625,33 @@ async function processMessage(
   core: OpenzaloCoreRuntime,
   runtime: RuntimeEnv,
   botUserId: string | undefined,
+  groupHistories: Map<string, HistoryEntry[]>,
+  historyLimit: number,
   statusSink?: (patch: OpenzaloStatusPatch) => void,
   mentionDetectionFailureWarnings?: Set<string>,
   humanPassSessions?: Set<string>,
   recordMetric?: (name: OpenzaloMetricName, delta?: number) => void,
 ): Promise<void> {
   const { threadId, content, timestamp, metadata } = message;
-  if (!content?.trim()) {
+  const rawBody = normalizeStringValue(content) ?? "";
+  const quoteContext = resolveQuoteContext(message);
+  const mediaContext = resolveMediaContext(message);
+  const hasInboundContext =
+    rawBody.length > 0 ||
+    quoteContext.hasQuote ||
+    Boolean(mediaContext.mediaPath || mediaContext.mediaUrl);
+  if (!hasInboundContext) {
     return;
   }
 
   const isGroup = inferIsGroupMessage(message);
-  const senderId = metadata?.fromId ?? threadId;
-  const senderName = metadata?.senderName ?? "";
+  const senderId = metadata?.fromId ?? metadata?.senderId ?? message.senderId ?? threadId;
+  const senderName =
+    metadata?.senderName ??
+    metadata?.senderDisplayName ??
+    message.senderName ??
+    message.senderDisplayName ??
+    "";
   const groupName = metadata?.threadName ?? "";
   const chatId = threadId;
 
@@ -432,7 +674,6 @@ async function processMessage(
 
   const dmPolicy = account.config.dmPolicy ?? "pairing";
   const configAllowFrom = (account.config.allowFrom ?? []).map((v) => String(v));
-  const rawBody = content.trim();
   const shouldComputeAuth = core.channel.commands.shouldComputeCommandAuthorized(rawBody, config);
   const storeAllowFrom =
     !isGroup && (dmPolicy !== "open" || shouldComputeAuth)
@@ -542,6 +783,30 @@ async function processMessage(
   const effectiveWasMentioned = shouldBypassMention || wasMentionedByUid;
 
   const fromLabel = isGroup ? `group:${chatId}` : senderName || `user:${senderId}`;
+  const historyKey = isGroup ? route.sessionKey : undefined;
+  const pendingHistoryEntry =
+    isGroup && historyKey
+      ? buildPendingHistoryEntry({
+          senderName: senderName || fromLabel,
+          rawBody,
+          quoteContext,
+          mediaContext,
+          timestamp,
+          messageId: message.msgId ?? message.cliMsgId,
+        })
+      : null;
+  const recordPendingGroupHistory = (): void => {
+    if (!historyKey) {
+      return;
+    }
+    recordPendingHistoryEntryIfEnabled({
+      historyMap: groupHistories,
+      historyKey,
+      limit: historyLimit,
+      entry: pendingHistoryEntry,
+    });
+  };
+
   const storePath = core.channel.session.resolveStorePath(config.session?.store, {
     agentId: route.agentId,
   });
@@ -558,10 +823,36 @@ async function processMessage(
     envelope: envelopeOptions,
     body: rawBody,
   });
+  let combinedBody = body;
+  if (isGroup && historyKey) {
+    combinedBody = buildPendingHistoryContextFromMap({
+      historyMap: groupHistories,
+      historyKey,
+      limit: historyLimit,
+      currentMessage: combinedBody,
+      formatEntry: (entry) =>
+        core.channel.reply.formatAgentEnvelope({
+          channel: "Zalo Personal",
+          from: fromLabel,
+          timestamp: entry.timestamp,
+          envelope: envelopeOptions,
+          body: `${entry.body}${entry.messageId ? ` [id:${entry.messageId}]` : ""}`,
+        }),
+    });
+  }
+  const inboundHistory =
+    isGroup && historyKey && historyLimit > 0
+      ? (groupHistories.get(historyKey) ?? []).map((entry) => ({
+          sender: entry.sender,
+          body: entry.body,
+          timestamp: entry.timestamp,
+        }))
+      : undefined;
 
   const ctxPayload = core.channel.reply.finalizeInboundContext({
-    Body: body,
+    Body: combinedBody,
     BodyForAgent: rawBody,
+    InboundHistory: inboundHistory,
     RawBody: rawBody,
     CommandBody: rawBody,
     From: isGroup ? `openzalo:group:${chatId}` : `openzalo:${senderId}`,
@@ -576,7 +867,19 @@ async function processMessage(
     WasMentioned: isGroup ? effectiveWasMentioned : undefined,
     Provider: "openzalo",
     Surface: "openzalo",
-    MessageSid: message.msgId ?? `${timestamp}`,
+    MessageSid: message.msgId ?? message.cliMsgId ?? `${timestamp}`,
+    ReplyToId: quoteContext.replyToId,
+    ReplyToIdFull: quoteContext.replyToIdFull,
+    ReplyToBody: quoteContext.replyToBody,
+    ReplyToSender: quoteContext.replyToSender,
+    ReplyToIsQuote: quoteContext.hasQuote ? true : undefined,
+    MediaPath: mediaContext.mediaPath,
+    MediaPaths: mediaContext.mediaPaths,
+    MediaUrl: mediaContext.mediaUrl,
+    MediaUrls: mediaContext.mediaUrls,
+    MediaType: mediaContext.mediaType,
+    MediaTypes: mediaContext.mediaTypes,
+    Timestamp: timestamp ? timestamp * 1000 : undefined,
     OriginatingChannel: "openzalo",
     OriginatingTo: `openzalo:${chatId}`,
   });
@@ -629,6 +932,9 @@ async function processMessage(
   }
 
   if (humanPassSessions?.has(humanPassKey)) {
+    if (isGroup) {
+      recordPendingGroupHistory();
+    }
     recordMetric?.("humanPassSkips");
     logVerbose(core, runtime, `openzalo: skip reply (human pass enabled): ${chatId}`);
     return;
@@ -637,6 +943,7 @@ async function processMessage(
   if (isGroup && shouldRequireMention) {
     if (canDetectMention) {
       if (!effectiveWasMentioned) {
+        recordPendingGroupHistory();
         logVerbose(core, runtime, `openzalo: skip group message (mention required): ${chatId}`);
         return;
       }
@@ -665,6 +972,7 @@ async function processMessage(
             runtime,
             `openzalo: skip group message (mention required, detection unavailable): ${chatId}`,
           );
+          recordPendingGroupHistory();
           return;
         }
       }
@@ -766,6 +1074,14 @@ async function processMessage(
     runtime.error?.(`[${account.accountId}] openzalo dispatch failed: ${String(err)}`);
   } finally {
     markDispatchIdle();
+  }
+
+  if (isGroup && historyKey) {
+    clearHistoryEntriesIfEnabled({
+      historyMap: groupHistories,
+      historyKey,
+      limit: historyLimit,
+    });
   }
 
   if ((hadDispatchError || hadTypingError) && !sentReply && shouldSendFailureNotice) {
@@ -992,6 +1308,9 @@ export async function monitorOpenzaloProvider(
 
   const mentionDetectionFailureWarnings = new Set<string>();
   const humanPassSessions = new Set<string>();
+  const groupHistories = new Map<string, HistoryEntry[]>();
+  const historyLimit = resolveOpenzaloHistoryLimit({ config, account });
+  const conversationLanes = new Map<string, Promise<void>>();
   const botUserId = await resolveOpenzcaUserId(account.profile, runtime);
   if (botUserId) {
     logVerbose(core, runtime, `[${account.accountId}] resolved bot user id=${botUserId}`);
@@ -1002,6 +1321,7 @@ export async function monitorOpenzaloProvider(
       `[${account.accountId}] bot user id unavailable; structured mention detection is unavailable`,
     );
   }
+  logVerbose(core, runtime, `[${account.accountId}] group history limit=${historyLimit}`);
 
   const stop = () => {
     stopped = true;
@@ -1013,6 +1333,7 @@ export async function monitorOpenzaloProvider(
       proc.kill("SIGTERM");
       proc = null;
     }
+    conversationLanes.clear();
     resolveRunning?.();
   };
 
@@ -1032,22 +1353,42 @@ export async function monitorOpenzaloProvider(
       runtime,
       account.profile,
       (msg) => {
-        logVerbose(core, runtime, `[${account.accountId}] inbound message`);
         statusSink?.({ lastInboundAt: Date.now() });
-        processMessage(
-          msg,
-          account,
-          config,
-          core,
-          runtime,
-          botUserId,
-          statusSink,
-          mentionDetectionFailureWarnings,
-          humanPassSessions,
-          recordMetric,
-        ).catch((err) => {
-          runtime.error(`[${account.accountId}] Failed to process message: ${String(err)}`);
-        });
+        const threadId = normalizeStringValue(msg.threadId) ?? "unknown";
+        const laneKey = `${account.accountId}:${threadId}`;
+        const hasPending = conversationLanes.has(laneKey);
+        if (hasPending) {
+          logVerbose(core, runtime, `[${account.accountId}] queue inbound lane=${laneKey}`);
+        }
+        const previous = conversationLanes.get(laneKey) ?? Promise.resolve();
+        const next = previous
+          .catch(() => undefined)
+          .then(async () => {
+            logVerbose(core, runtime, `[${account.accountId}] inbound message lane=${laneKey}`);
+            await processMessage(
+              msg,
+              account,
+              config,
+              core,
+              runtime,
+              botUserId,
+              groupHistories,
+              historyLimit,
+              statusSink,
+              mentionDetectionFailureWarnings,
+              humanPassSessions,
+              recordMetric,
+            );
+          })
+          .catch((err) => {
+            runtime.error(`[${account.accountId}] Failed to process message: ${String(err)}`);
+          })
+          .finally(() => {
+            if (conversationLanes.get(laneKey) === next) {
+              conversationLanes.delete(laneKey);
+            }
+          });
+        conversationLanes.set(laneKey, next);
       },
       (err) => {
         runtime.error(`[${account.accountId}] openzca listener error: ${String(err)}`);

@@ -33,6 +33,7 @@ const openzaloAccountSchema = z.object({
   groupMentionDetectionFailure: z
     .enum(["allow", "deny", "allow-with-warning"])
     .optional(),
+  historyLimit: z.number().int().min(0).optional(),
   sendFailureNotice: z.boolean().optional(),
   sendFailureMessage: z.string().optional(),
   messagePrefix: z.string().optional(),

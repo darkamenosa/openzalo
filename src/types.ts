@@ -38,27 +38,88 @@ export type ZcaMention = {
   text?: string;
 };
 
+export type ZcaQuoteContext = {
+  ownerId?: string;
+  senderName?: string;
+  msg?: string;
+  attach?: unknown;
+  ts?: number;
+  cliMsgId?: string;
+  globalMsgId?: string;
+  cliMsgType?: string;
+  mediaPath?: string;
+  mediaPaths?: string[];
+  mediaUrl?: string;
+  mediaUrls?: string[];
+  mediaType?: string;
+  mediaTypes?: string[];
+};
+
+export type ZcaMessageMetadata = {
+  isGroup?: boolean;
+  chatType?: string;
+  threadId?: string;
+  targetId?: string;
+  threadName?: string;
+  senderName?: string;
+  senderDisplayName?: string;
+  senderId?: string;
+  fromId?: string;
+  toId?: string;
+  msgType?: string;
+  quote?: ZcaQuoteContext;
+  quoteMediaPath?: string;
+  quoteMediaPaths?: string[];
+  quoteMediaUrl?: string;
+  quoteMediaUrls?: string[];
+  quoteMediaType?: string;
+  quoteMediaTypes?: string[];
+  timestamp?: number;
+  mediaPath?: string;
+  mediaPaths?: string[];
+  mediaUrl?: string;
+  mediaUrls?: string[];
+  mediaType?: string;
+  mediaTypes?: string[];
+  mediaKind?: string;
+  mentions?: ZcaMention[];
+  mentionIds?: string[];
+  mentionCount?: number;
+};
+
 export type ZcaMessage = {
   threadId: string;
+  targetId?: string;
+  conversationId?: string;
   msgId?: string;
   cliMsgId?: string;
   type: number;
   chatType?: string;
-  content: string;
+  content?: string;
   timestamp: number;
+  msgType?: string;
+  quote?: ZcaQuoteContext;
+  quoteMediaPath?: string;
+  quoteMediaPaths?: string[];
+  quoteMediaUrl?: string;
+  quoteMediaUrls?: string[];
+  quoteMediaType?: string;
+  quoteMediaTypes?: string[];
+  mediaPath?: string;
+  mediaPaths?: string[];
+  mediaUrl?: string;
+  mediaUrls?: string[];
+  mediaType?: string;
+  mediaTypes?: string[];
+  mediaKind?: string;
   mentions?: ZcaMention[];
   mentionIds?: string[];
-  metadata?: {
-    isGroup: boolean;
-    chatType?: string;
-    threadName?: string;
-    senderName?: string;
-    senderDisplayName?: string;
-    fromId?: string;
-    mentions?: ZcaMention[];
-    mentionIds?: string[];
-    mentionCount?: number;
-  };
+  metadata?: ZcaMessageMetadata;
+  senderId?: string;
+  senderName?: string;
+  senderDisplayName?: string;
+  toId?: string;
+  ts?: string;
 };
 
 export type ZcaUserInfo = {
@@ -118,6 +179,7 @@ export type OpenzaloAccountConfig = {
   groups?: Record<string, OpenzaloGroupConfig>;
   groupRequireMention?: boolean;
   groupMentionDetectionFailure?: OpenzaloGroupMentionDetectionFailureMode;
+  historyLimit?: number;
   sendFailureNotice?: boolean;
   sendFailureMessage?: string;
   messagePrefix?: string;
@@ -139,6 +201,7 @@ export type OpenzaloConfig = {
   groups?: Record<string, OpenzaloGroupConfig>;
   groupRequireMention?: boolean;
   groupMentionDetectionFailure?: OpenzaloGroupMentionDetectionFailureMode;
+  historyLimit?: number;
   sendFailureNotice?: boolean;
   sendFailureMessage?: string;
   messagePrefix?: string;
