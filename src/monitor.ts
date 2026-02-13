@@ -241,6 +241,10 @@ function classifyOpenzcaStderr(text: string): "info" | "warn" | "error" {
   return "info";
 }
 
+function shouldRestartOnOpenzcaListenerStderr(text: string): boolean {
+  return /(?:^|\s)listen\.(?:closed|error|disconnected|stop)\b/i.test(text);
+}
+
 function parseHumanPassCommand(raw: string): HumanPassCommand | null {
   const normalized = raw.trim().toLowerCase();
   if (/^(?:\/)?(?:human\s*pass|humanpass|bot)\s+on$/.test(normalized)) {
@@ -599,19 +603,41 @@ async function startOpenzcaListener(
   });
 
   proc.stderr?.on("data", (data: Buffer) => {
-    const text = data.toString().trim();
-    if (!text) {
-      return;
-    }
+    const lines = data
+      .toString()
+      .split(/\r?\n/g)
+      .map((line) => line.trim())
+      .filter(Boolean);
 
-    const level = classifyOpenzcaStderr(text);
-    if (level === "error") {
-      runtime.error(`[openzalo] openzca stderr: ${text}`);
-      return;
+    for (const text of lines) {
+      const level = classifyOpenzcaStderr(text);
+      if (level === "error") {
+        runtime.error(`[openzalo] openzca stderr: ${text}`);
+      } else {
+        runtime.log?.(
+          level === "warn"
+            ? `[openzalo][warn] openzca stderr: ${text}`
+            : `[openzalo] openzca stderr: ${text}`,
+        );
+      }
+
+      if (!reportedTermination && shouldRestartOnOpenzcaListenerStderr(text)) {
+        reportTermination(new Error(`openzca listener stream closed: ${text}`));
+        try {
+          proc.kill("SIGTERM");
+        } catch {
+          // ignore
+        }
+        const forceKillTimer = setTimeout(() => {
+          try {
+            proc.kill("SIGKILL");
+          } catch {
+            // ignore
+          }
+        }, 5000);
+        forceKillTimer.unref?.();
+      }
     }
-    runtime.log?.(
-      level === "warn" ? `[openzalo][warn] openzca stderr: ${text}` : `[openzalo] openzca stderr: ${text}`,
-    );
   });
 
   void promise.then((result) => {
@@ -1423,9 +1449,24 @@ export async function monitorOpenzaloProvider(
           resolveRunning?.();
           return;
         }
+        if (proc) {
+          try {
+            proc.kill("SIGTERM");
+          } catch {
+            // ignore stale process kill failures
+          }
+          proc = null;
+        }
+        if (restartTimer) {
+          clearTimeout(restartTimer);
+          restartTimer = null;
+        }
         runtime.error(`[${account.accountId}] openzca listener stopped: ${String(err)}`);
         logVerbose(core, runtime, `[${account.accountId}] restarting listener in 5s...`);
-        restartTimer = setTimeout(startListener, 5000);
+        restartTimer = setTimeout(() => {
+          restartTimer = null;
+          startListener();
+        }, 5000);
       },
       abortSignal,
     )
@@ -1438,9 +1479,16 @@ export async function monitorOpenzaloProvider(
           resolveRunning?.();
           return;
         }
+        if (restartTimer) {
+          clearTimeout(restartTimer);
+          restartTimer = null;
+        }
         runtime.error(`[${account.accountId}] openzca listener failed to start: ${String(listenerError)}`);
         logVerbose(core, runtime, `[${account.accountId}] restarting listener in 5s...`);
-        restartTimer = setTimeout(startListener, 5000);
+        restartTimer = setTimeout(() => {
+          restartTimer = null;
+          startListener();
+        }, 5000);
       });
   };
 
