@@ -3,17 +3,13 @@ import type {
   OpenClawConfig,
   MarkdownTableMode,
   RuntimeEnv,
-  HistoryEntry,
 } from "openclaw/plugin-sdk";
 import {
-  buildPendingHistoryContextFromMap,
-  clearHistoryEntriesIfEnabled,
   createReplyPrefixOptions,
   createTypingCallbacks,
   DEFAULT_GROUP_HISTORY_LIMIT,
   logTypingFailure,
   mergeAllowlist,
-  recordPendingHistoryEntryIfEnabled,
   resolveChannelMediaMaxBytes,
   summarizeMapping,
 } from "openclaw/plugin-sdk";
@@ -25,7 +21,7 @@ import type {
   ZcaMessage,
 } from "./types.js";
 import { getOpenzaloRuntime } from "./runtime.js";
-import { sendMessageOpenzalo, sendTypingOpenzalo } from "./send.js";
+import { readRecentMessagesOpenzalo, sendMessageOpenzalo, sendTypingOpenzalo } from "./send.js";
 import { parseJsonOutput, runOpenzca, runOpenzcaStreaming } from "./openzca.js";
 import {
   OPENZALO_DEFAULT_FAILURE_NOTICE_MESSAGE,
@@ -486,48 +482,155 @@ function resolveMediaKind(mediaType?: string): string | undefined {
   return "attachment";
 }
 
-function buildPendingHistoryEntry(params: {
-  senderName: string;
-  rawBody: string;
-  quoteContext: ResolvedOpenzaloQuoteContext;
-  mediaContext: ResolvedOpenzaloMediaContext;
+type OpenzaloContextHistoryEntry = {
+  sender: string;
+  body: string;
   timestamp?: number;
-  messageId?: string;
-}): HistoryEntry | null {
-  const bodyParts: string[] = [];
-  if (params.rawBody) {
-    bodyParts.push(params.rawBody);
+};
+
+type OpenzaloRecentMessageRow = {
+  msgId?: unknown;
+  cliMsgId?: unknown;
+  senderId?: unknown;
+  senderName?: unknown;
+  ts?: unknown;
+  msgType?: unknown;
+  content?: unknown;
+};
+
+type OpenzaloRecentMessagesPayload = {
+  messages?: OpenzaloRecentMessageRow[];
+};
+
+function buildSenderLabel(senderId: string, senderName?: string): string {
+  const name = normalizeStringValue(senderName);
+  if (name) {
+    return `${name} (${senderId})`;
+  }
+  return `user:${senderId}`;
+}
+
+function toUnixMillis(value: unknown): number | undefined {
+  if (typeof value !== "number" && typeof value !== "string") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  if (parsed > 1e12) {
+    return Math.trunc(parsed);
+  }
+  return Math.trunc(parsed * 1000);
+}
+
+function stringifyCompact(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function truncateContextText(value: string, maxChars = 1200): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, maxChars)}...`;
+}
+
+function buildRecentHistoryBody(row: OpenzaloRecentMessageRow): string | null {
+  const payloadParts: string[] = [];
+  const content = stringifyCompact(row.content).trim();
+  if (content) {
+    payloadParts.push(truncateContextText(content));
   }
 
-  if (!params.rawBody && params.quoteContext.replyToBody) {
-    bodyParts.push(`[quote] ${params.quoteContext.replyToBody}`);
+  const refs: string[] = [];
+  const msgId = normalizeStringValue(row.msgId);
+  const cliMsgId = normalizeStringValue(row.cliMsgId);
+  const msgType = normalizeStringValue(row.msgType);
+  if (msgId) refs.push(`msgId:${msgId}`);
+  if (cliMsgId) refs.push(`cliMsgId:${cliMsgId}`);
+  if (msgType) refs.push(`msgType:${msgType}`);
+  if (refs.length > 0) {
+    payloadParts.push(`[${refs.join(" ")}]`);
   }
 
-  const mediaType = params.mediaContext.mediaType ?? params.mediaContext.mediaTypes?.[0];
-  const mediaKind = resolveMediaKind(mediaType);
-  const hasMediaRef = Boolean(params.mediaContext.mediaPath || params.mediaContext.mediaUrl);
-  if (hasMediaRef || mediaKind) {
-    const mediaTokens = [`<media:${mediaKind ?? "attachment"}>`];
-    if (params.mediaContext.mediaPath) {
-      mediaTokens.push(`path:${params.mediaContext.mediaPath}`);
-    }
-    if (params.mediaContext.mediaUrl) {
-      mediaTokens.push(`url:${params.mediaContext.mediaUrl}`);
-    }
-    bodyParts.push(mediaTokens.join(" "));
-  }
-
-  const body = bodyParts.join("\n").trim();
-  if (!body) {
+  if (payloadParts.length === 0) {
     return null;
   }
+  return payloadParts.join("\n");
+}
 
-  return {
-    sender: params.senderName.trim() || "unknown",
-    body,
-    timestamp: typeof params.timestamp === "number" ? params.timestamp * 1000 : undefined,
-    messageId: params.messageId,
-  };
+async function fetchGroupRecentHistory(params: {
+  threadId: string;
+  profile: string;
+  limit: number;
+  currentMsgId?: string;
+  currentCliMsgId?: string;
+  core: OpenzaloCoreRuntime;
+  runtime: RuntimeEnv;
+}): Promise<OpenzaloContextHistoryEntry[]> {
+  const count = Math.min(Math.max(Math.trunc(params.limit), 1), 200);
+  const recent = await readRecentMessagesOpenzalo(params.threadId, {
+    profile: params.profile,
+    isGroup: true,
+    count,
+  });
+  if (!recent.ok) {
+    logVerbose(
+      params.core,
+      params.runtime,
+      `openzalo: failed to fetch group recent history for ${params.threadId}: ${recent.error ?? "unknown error"}`,
+    );
+    return [];
+  }
+
+  const payload = (recent.output ?? {}) as OpenzaloRecentMessagesPayload;
+  const rows = Array.isArray(payload.messages) ? payload.messages : [];
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const currentMsgId = normalizeStringValue(params.currentMsgId);
+  const currentCliMsgId = normalizeStringValue(params.currentCliMsgId);
+  const entries: Array<OpenzaloContextHistoryEntry & { sortTs: number }> = [];
+  for (const row of rows) {
+    const msgId = normalizeStringValue(row.msgId);
+    const cliMsgId = normalizeStringValue(row.cliMsgId);
+    if ((currentMsgId && msgId === currentMsgId) || (currentCliMsgId && cliMsgId === currentCliMsgId)) {
+      continue;
+    }
+
+    const senderId = normalizeStringValue(row.senderId) ?? "unknown";
+    const senderName = normalizeStringValue(row.senderName);
+    const body = buildRecentHistoryBody(row);
+    if (!body) {
+      continue;
+    }
+
+    const ts = toUnixMillis(row.ts);
+    entries.push({
+      sender: buildSenderLabel(senderId, senderName),
+      body,
+      timestamp: ts,
+      sortTs: ts ?? 0,
+    });
+  }
+
+  entries.sort((a, b) => a.sortTs - b.sortTs);
+  const trimmed =
+    entries.length > count
+      ? entries.slice(entries.length - count)
+      : entries;
+  return trimmed.map(({ sortTs: _sortTs, ...entry }) => entry);
 }
 
 function resolveOpenzaloHistoryLimit(params: {
@@ -666,7 +769,6 @@ async function processMessage(
   core: OpenzaloCoreRuntime,
   runtime: RuntimeEnv,
   botUserId: string | undefined,
-  groupHistories: Map<string, HistoryEntry[]>,
   historyLimit: number,
   statusSink?: (patch: OpenzaloStatusPatch) => void,
   mentionDetectionFailureWarnings?: Set<string>,
@@ -823,30 +925,12 @@ async function processMessage(
   const canDetectMention = canDetectMentionByUid;
   const effectiveWasMentioned = shouldBypassMention || wasMentionedByUid;
 
-  const fromLabel = isGroup ? `group:${chatId}` : senderName || `user:${senderId}`;
-  const historyKey = isGroup ? route.sessionKey : undefined;
-  const pendingHistoryEntry =
-    isGroup && historyKey
-      ? buildPendingHistoryEntry({
-          senderName: senderName || fromLabel,
-          rawBody,
-          quoteContext,
-          mediaContext,
-          timestamp,
-          messageId: message.msgId ?? message.cliMsgId,
-        })
-      : null;
-  const recordPendingGroupHistory = (): void => {
-    if (!historyKey) {
-      return;
-    }
-    recordPendingHistoryEntryIfEnabled({
-      historyMap: groupHistories,
-      historyKey,
-      limit: historyLimit,
-      entry: pendingHistoryEntry,
-    });
-  };
+  const senderLabel = buildSenderLabel(senderId, senderName);
+  const fromLabel = senderLabel;
+  const normalizedGroupName = normalizeStringValue(groupName);
+  const conversationLabel = isGroup
+    ? (normalizedGroupName ? `${normalizedGroupName} (${chatId})` : `group:${chatId}`)
+    : senderLabel;
 
   const storePath = core.channel.session.resolveStorePath(config.session?.store, {
     agentId: route.agentId,
@@ -864,31 +948,8 @@ async function processMessage(
     envelope: envelopeOptions,
     body: rawBody,
   });
-  let combinedBody = body;
-  if (isGroup && historyKey) {
-    combinedBody = buildPendingHistoryContextFromMap({
-      historyMap: groupHistories,
-      historyKey,
-      limit: historyLimit,
-      currentMessage: combinedBody,
-      formatEntry: (entry) =>
-        core.channel.reply.formatAgentEnvelope({
-          channel: "Zalo Personal",
-          from: fromLabel,
-          timestamp: entry.timestamp,
-          envelope: envelopeOptions,
-          body: `${entry.body}${entry.messageId ? ` [id:${entry.messageId}]` : ""}`,
-        }),
-    });
-  }
-  const inboundHistory =
-    isGroup && historyKey && historyLimit > 0
-      ? (groupHistories.get(historyKey) ?? []).map((entry) => ({
-          sender: entry.sender,
-          body: entry.body,
-          timestamp: entry.timestamp,
-        }))
-      : undefined;
+  const combinedBody = body;
+  const inboundHistory = undefined;
 
   const ctxPayload = core.channel.reply.finalizeInboundContext({
     Body: combinedBody,
@@ -901,7 +962,9 @@ async function processMessage(
     SessionKey: route.sessionKey,
     AccountId: route.accountId,
     ChatType: isGroup ? "group" : "direct",
-    ConversationLabel: fromLabel,
+    ConversationLabel: conversationLabel,
+    GroupSubject: isGroup ? normalizedGroupName : undefined,
+    GroupChannel: isGroup ? `group:${chatId}` : undefined,
     SenderName: senderName || undefined,
     SenderId: senderId,
     CommandAuthorized: commandAuthorized,
@@ -909,6 +972,7 @@ async function processMessage(
     Provider: "openzalo",
     Surface: "openzalo",
     MessageSid: message.msgId ?? message.cliMsgId ?? `${timestamp}`,
+    MessageSidAlt: message.cliMsgId ?? undefined,
     ReplyToId: quoteContext.replyToId,
     ReplyToIdFull: quoteContext.replyToIdFull,
     ReplyToBody: quoteContext.replyToBody,
@@ -973,9 +1037,6 @@ async function processMessage(
   }
 
   if (humanPassSessions?.has(humanPassKey)) {
-    if (isGroup) {
-      recordPendingGroupHistory();
-    }
     recordMetric?.("humanPassSkips");
     logVerbose(core, runtime, `openzalo: skip reply (human pass enabled): ${chatId}`);
     return;
@@ -984,7 +1045,6 @@ async function processMessage(
   if (isGroup && shouldRequireMention) {
     if (canDetectMention) {
       if (!effectiveWasMentioned) {
-        recordPendingGroupHistory();
         logVerbose(core, runtime, `openzalo: skip group message (mention required): ${chatId}`);
         return;
       }
@@ -1013,10 +1073,41 @@ async function processMessage(
             runtime,
             `openzalo: skip group message (mention required, detection unavailable): ${chatId}`,
           );
-          recordPendingGroupHistory();
           return;
         }
       }
+    }
+  }
+
+  if (isGroup && historyLimit > 0) {
+    const recentHistoryLimit = Math.min(Math.max(historyLimit, 1), 200);
+    const recentGroupHistory = await fetchGroupRecentHistory({
+      threadId: chatId,
+      profile: account.profile,
+      limit: recentHistoryLimit,
+      currentMsgId: message.msgId,
+      currentCliMsgId: message.cliMsgId,
+      core,
+      runtime,
+    });
+    if (recentGroupHistory.length > 0) {
+      const historyBody = recentGroupHistory
+        .map((entry) =>
+          core.channel.reply.formatAgentEnvelope({
+            channel: "Zalo Personal",
+            from: entry.sender,
+            timestamp: entry.timestamp,
+            envelope: envelopeOptions,
+            body: entry.body,
+          }),
+        )
+        .join("\n");
+      ctxPayload.Body = `${historyBody}\n${body}`.trim();
+      ctxPayload.InboundHistory = recentGroupHistory.map((entry) => ({
+        sender: entry.sender,
+        body: entry.body,
+        timestamp: entry.timestamp,
+      }));
     }
   }
 
@@ -1115,14 +1206,6 @@ async function processMessage(
     runtime.error?.(`[${account.accountId}] openzalo dispatch failed: ${String(err)}`);
   } finally {
     markDispatchIdle();
-  }
-
-  if (isGroup && historyKey) {
-    clearHistoryEntriesIfEnabled({
-      historyMap: groupHistories,
-      historyKey,
-      limit: historyLimit,
-    });
   }
 
   if ((hadDispatchError || hadTypingError) && !sentReply && shouldSendFailureNotice) {
@@ -1349,9 +1432,7 @@ export async function monitorOpenzaloProvider(
 
   const mentionDetectionFailureWarnings = new Set<string>();
   const humanPassSessions = new Set<string>();
-  const groupHistories = new Map<string, HistoryEntry[]>();
   const historyLimit = resolveOpenzaloHistoryLimit({ config, account });
-  const groupConversationLanes = new Map<string, Promise<void>>();
   const botUserId = await resolveOpenzcaUserId(account.profile, runtime);
   if (botUserId) {
     logVerbose(core, runtime, `[${account.accountId}] resolved bot user id=${botUserId}`);
@@ -1362,7 +1443,7 @@ export async function monitorOpenzaloProvider(
       `[${account.accountId}] bot user id unavailable; structured mention detection is unavailable`,
     );
   }
-  logVerbose(core, runtime, `[${account.accountId}] group history limit=${historyLimit}`);
+  logVerbose(core, runtime, `[${account.accountId}] group recent-history limit=${historyLimit}`);
   const processInboundMessage = async (msg: ZcaMessage): Promise<void> => {
     await processMessage(
       msg,
@@ -1371,38 +1452,12 @@ export async function monitorOpenzaloProvider(
       core,
       runtime,
       botUserId,
-      groupHistories,
       historyLimit,
       statusSink,
       mentionDetectionFailureWarnings,
       humanPassSessions,
       recordMetric,
     );
-  };
-
-  const enqueueGroupMessage = (msg: ZcaMessage): void => {
-    const threadId = normalizeStringValue(msg.threadId) ?? "unknown";
-    const laneKey = `${account.accountId}:${threadId}`;
-    const hasPending = groupConversationLanes.has(laneKey);
-    if (hasPending) {
-      logVerbose(core, runtime, `[${account.accountId}] queue inbound lane=${laneKey}`);
-    }
-    const previous = groupConversationLanes.get(laneKey) ?? Promise.resolve();
-    const next = previous
-      .catch(() => undefined)
-      .then(async () => {
-        logVerbose(core, runtime, `[${account.accountId}] inbound message lane=${laneKey}`);
-        await processInboundMessage(msg);
-      })
-      .catch((err) => {
-        runtime.error(`[${account.accountId}] Failed to process message: ${String(err)}`);
-      })
-      .finally(() => {
-        if (groupConversationLanes.get(laneKey) === next) {
-          groupConversationLanes.delete(laneKey);
-        }
-      });
-    groupConversationLanes.set(laneKey, next);
   };
 
   const stop = () => {
@@ -1415,7 +1470,6 @@ export async function monitorOpenzaloProvider(
       proc.kill("SIGTERM");
       proc = null;
     }
-    groupConversationLanes.clear();
     resolveRunning?.();
   };
 
@@ -1436,12 +1490,8 @@ export async function monitorOpenzaloProvider(
       account.profile,
       (msg) => {
         statusSink?.({ lastInboundAt: Date.now() });
-        if (inferIsGroupMessage(msg)) {
-          enqueueGroupMessage(msg);
-          return;
-        }
         void processInboundMessage(msg).catch((err) => {
-          runtime.error(`[${account.accountId}] Failed to process DM message: ${String(err)}`);
+          runtime.error(`[${account.accountId}] Failed to process message: ${String(err)}`);
         });
       },
       (err) => {

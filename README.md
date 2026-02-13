@@ -12,7 +12,7 @@ OpenClaw extension for Zalo Personal Account messaging via [openzca](https://ope
 - **Typing Indicator**: Sends typing events while OpenClaw is processing/replying.
 - **Media Sending**: Supports image/video/voice style media send via `openzca msg <type> -u <url-or-path>`.
 - **Group Reply Modes**: Supports open groups and mention-required groups (`groupRequireMention`), with group allowlist policy support.
-- **Pending Group Context**: In mention-required groups, untagged messages are buffered as pending history and injected on the next tagged turn.
+- **Recent Group Context**: In mention-required groups, the bot loads recent group messages on-demand before replying to a tagged turn.
 - **Human Pass Mode**: `human pass on/off` to pause/resume bot replies per chat while still ingesting messages for context.
 - **Failure Notice Fallback**: Optional user-facing fallback message when reply dispatch fails.
 - **Interactive Message Actions**: Supports OpenClaw actions (`send`, `read`, `react`, `edit`, `unsend`, `delete`, `pin`, `unpin`, `list-pins`, `member-info`) using `openzca` commands.
@@ -101,7 +101,7 @@ channels:
     dmPolicy: pairing # pairing | allowlist | open | disabled
     groupRequireMention: true # require @mention in group chats
     groupMentionDetectionFailure: deny # allow | deny | allow-with-warning
-    historyLimit: 50 # max pending group messages kept before next bot reply
+    historyLimit: 50 # max recent group messages loaded for context on tagged turns
     sendFailureNotice: true # send fallback message on dispatch failure
     sendFailureMessage: Some problem occurred, could not send a reply.
     textChunkLimit: 2000 # max supported by openzca/openzalo
@@ -143,7 +143,7 @@ Behavior summary:
 
 - Direct chat (DM): unknown users do not get normal bot replies; they receive pairing flow first.
 - Group chat: bot replies only when explicitly mentioned.
-- Group chat context: when mention is required, untagged messages are buffered and included in the next tagged prompt (up to `historyLimit`).
+- Group chat context: when mention is required, the bot fetches recent group messages and includes up to `historyLimit` entries before replying.
 - Mention detection: uses structured mention IDs from inbound payload (`mentionIds` / `mentions[].uid`) matched against bot user id.
 - If mention detection is unavailable while mention is required: message is denied by default.
 - Authorized control commands can bypass mention gating.
