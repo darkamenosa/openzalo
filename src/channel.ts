@@ -522,9 +522,10 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
         if (!trimmed) {
           return false;
         }
-        return /^\d{3,}$/.test(trimmed);
+        const parsed = parseOpenzaloActionTarget(trimmed);
+        return /^\d{3,}$/.test(parsed.threadId);
       },
-      hint: "<threadId>",
+      hint: "<threadId|group:threadId|user:threadId>",
     },
   },
   directory: {
@@ -1047,13 +1048,15 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
     textChunkLimit: OPENZALO_TEXT_LIMIT,
     sendText: async ({ to, text, accountId, cfg }) => {
       const account = resolveOpenzaloAccountSync({ cfg: cfg, accountId });
+      const target = parseOpenzaloActionTarget(to);
       const maxChars =
         typeof account.config.textChunkLimit === "number" && account.config.textChunkLimit > 0
           ? Math.min(Math.floor(account.config.textChunkLimit), OPENZALO_TEXT_LIMIT)
           : OPENZALO_TEXT_LIMIT;
       const maxBytes = resolveOpenzaloMediaMaxBytes(cfg, accountId);
-      const result = await sendMessageOpenzalo(to, text, {
+      const result = await sendMessageOpenzalo(target.threadId, text, {
         profile: account.profile,
+        isGroup: target.isGroup,
         maxChars,
         maxBytes,
       });
@@ -1066,13 +1069,15 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
     },
     sendMedia: async ({ to, text, mediaUrl, accountId, cfg }) => {
       const account = resolveOpenzaloAccountSync({ cfg: cfg, accountId });
+      const target = parseOpenzaloActionTarget(to);
       const maxChars =
         typeof account.config.textChunkLimit === "number" && account.config.textChunkLimit > 0
           ? Math.min(Math.floor(account.config.textChunkLimit), OPENZALO_TEXT_LIMIT)
           : OPENZALO_TEXT_LIMIT;
       const maxBytes = resolveOpenzaloMediaMaxBytes(cfg, accountId);
-      const result = await sendMessageOpenzalo(to, text, {
+      const result = await sendMessageOpenzalo(target.threadId, text, {
         profile: account.profile,
+        isGroup: target.isGroup,
         mediaUrl,
         maxChars,
         maxBytes,
