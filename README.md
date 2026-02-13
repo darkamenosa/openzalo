@@ -262,7 +262,7 @@ The extension registers a `openzalo` tool for AI agents:
 }
 ```
 
-Available actions: `send`, `image`, `link`, `friends`, `groups`, `me`, `status`
+Available actions: `send`, `image`, `link`, `friends`, `groups`, `group-members`, `me`, `status`
 
 ## Troubleshooting
 

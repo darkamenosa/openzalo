@@ -21,7 +21,8 @@ const plugin = {
       description:
         "Send messages and access data via Zalo personal account. " +
         "Actions: send (text message), image (send image URL), link (send link), " +
-        "friends (list/search friends), groups (list groups), me (profile info), status (auth check).",
+        "friends (list/search friends), groups (list groups), group-members (list members in a group), " +
+        "me (profile info), status (auth check).",
       parameters: OpenzaloToolSchema,
       execute: executeOpenzaloTool,
     } as AnyAgentTool);

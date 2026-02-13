@@ -1,7 +1,16 @@
 import { Type } from "@sinclair/typebox";
 import { runOpenzca, parseJsonOutput } from "./openzca.js";
 
-const ACTIONS = ["send", "image", "link", "friends", "groups", "me", "status"] as const;
+const ACTIONS = [
+  "send",
+  "image",
+  "link",
+  "friends",
+  "groups",
+  "group-members",
+  "me",
+  "status",
+] as const;
 
 type AgentToolResult = {
   content: Array<{ type: string; text: string }>;
@@ -24,6 +33,7 @@ export const OpenzaloToolSchema = Type.Object(
   {
     action: stringEnum(ACTIONS, { description: `Action to perform: ${ACTIONS.join(", ")}` }),
     threadId: Type.Optional(Type.String({ description: "Thread ID for messaging" })),
+    groupId: Type.Optional(Type.String({ description: "Group ID for group-member listing" })),
     message: Type.Optional(Type.String({ description: "Message text" })),
     isGroup: Type.Optional(Type.Boolean({ description: "Is group chat" })),
     profile: Type.Optional(Type.String({ description: "Profile name" })),
@@ -36,6 +46,7 @@ export const OpenzaloToolSchema = Type.Object(
 type ToolParams = {
   action: (typeof ACTIONS)[number];
   threadId?: string;
+  groupId?: string;
   message?: string;
   isGroup?: boolean;
   profile?: string;
@@ -130,6 +141,21 @@ export async function executeOpenzaloTool(
         return json(parsed ?? { raw: result.stdout });
       }
 
+      case "group-members": {
+        const groupId = params.groupId?.trim() || params.threadId?.trim();
+        if (!groupId) {
+          throw new Error("groupId (or threadId) required for group-members action");
+        }
+        const result = await runOpenzca(["group", "members", groupId, "-j"], {
+          profile: params.profile,
+        });
+        if (!result.ok) {
+          throw new Error(result.stderr || "Failed to get group members");
+        }
+        const parsed = parseJsonOutput(result.stdout);
+        return json(parsed ?? { raw: result.stdout });
+      }
+
       case "me": {
         const result = await runOpenzca(["me", "info", "-j"], {
           profile: params.profile,
@@ -154,7 +180,7 @@ export async function executeOpenzaloTool(
       default: {
         params.action satisfies never;
         throw new Error(
-          `Unknown action: ${String(params.action)}. Valid actions: send, image, link, friends, groups, me, status`,
+          `Unknown action: ${String(params.action)}. Valid actions: send, image, link, friends, groups, group-members, me, status`,
         );
       }
     }
