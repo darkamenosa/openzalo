@@ -161,17 +161,34 @@ type OpenzaloActionsConfig = {
   reactions?: boolean;
 };
 
-function buildOpenzaloThreadingToolContext(params: {
-  context: { From?: string; To?: string; ChatType?: string };
+type OpenzaloThreadingToolContext = {
+  currentChannelId?: string;
   hasRepliedRef?: { value: boolean };
-}): { currentChannelId?: string; hasRepliedRef?: { value: boolean } } {
+  replyToId?: string;
+  replyToIdFull?: string;
+};
+
+function buildOpenzaloThreadingToolContext(params: {
+  context: { From?: string; To?: string; ChatType?: string; ReplyToId?: string; ReplyToIdFull?: string };
+  hasRepliedRef?: { value: boolean };
+}): OpenzaloThreadingToolContext {
   const currentChannelId =
     coerceOpenzaloThreadingTarget(params.context.From, params.context.ChatType) ||
     coerceOpenzaloThreadingTarget(params.context.To, params.context.ChatType) ||
     undefined;
+  const replyToId =
+    typeof params.context.ReplyToId === "string" && params.context.ReplyToId.trim()
+      ? params.context.ReplyToId.trim()
+      : undefined;
+  const replyToIdFull =
+    typeof params.context.ReplyToIdFull === "string" && params.context.ReplyToIdFull.trim()
+      ? params.context.ReplyToIdFull.trim()
+      : undefined;
   return {
     currentChannelId,
     hasRepliedRef: params.hasRepliedRef,
+    replyToId,
+    replyToIdFull,
   };
 }
 
@@ -243,7 +260,7 @@ function readActionMessageField(params: Record<string, unknown>, key: string): s
 
 function resolveOpenzaloActionThread(
   params: Record<string, unknown>,
-  toolContext?: { currentChannelId?: string },
+  toolContext?: OpenzaloThreadingToolContext,
 ): { threadId: string; isGroup: boolean } {
   const toTarget = readStringParam(params, "to");
   const threadTarget = readStringParam(params, "threadId");
@@ -300,6 +317,21 @@ function resolveOpenzaloActionThread(
     threadId: parsed.threadId,
     isGroup: false,
   };
+}
+
+function readToolContextString(
+  toolContext: unknown,
+  key: "replyToId" | "replyToIdFull",
+): string | undefined {
+  if (!toolContext || typeof toolContext !== "object") {
+    return undefined;
+  }
+  const value = (toolContext as Record<string, unknown>)[key];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
 }
 
 function resolveOpenzaloMediaMaxBytes(cfg: OpenClawConfig, accountId?: string | null): number | undefined {
@@ -1032,11 +1064,25 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
         const msgId =
           readActionMessageField(params, "msgId") ??
           readActionMessageField(params, "messageId") ??
-          readStringParam(params, "msgId", { required: true, label: "msgId/messageId" });
+          readActionMessageField(params, "globalMsgId") ??
+          readActionMessageField(params, "replyToIdFull") ??
+          readStringParam(params, "msgId") ??
+          readStringParam(params, "messageId") ??
+          readStringParam(params, "replyToIdFull") ??
+          readToolContextString(toolContext, "replyToIdFull");
         const cliMsgId =
           readActionMessageField(params, "cliMsgId") ??
           readActionMessageField(params, "clientMessageId") ??
-          readStringParam(params, "cliMsgId", { required: true });
+          readActionMessageField(params, "replyToId") ??
+          readStringParam(params, "cliMsgId") ??
+          readStringParam(params, "clientMessageId") ??
+          readStringParam(params, "replyToId") ??
+          readToolContextString(toolContext, "replyToId");
+        if (!msgId || !cliMsgId) {
+          throw new Error(
+            "msgId and cliMsgId required for unsend. Reply directly to the target message or provide both IDs.",
+          );
+        }
         const result = await unsendMessageOpenzalo(
           { threadId: target.threadId, msgId, cliMsgId },
           {
