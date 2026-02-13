@@ -161,6 +161,17 @@ type OpenzaloActionsConfig = {
   reactions?: boolean;
 };
 
+function buildOpenzaloThreadingToolContext(params: {
+  context: { From?: string; To?: string };
+  hasRepliedRef?: { value: boolean };
+}): { currentChannelId?: string; hasRepliedRef?: { value: boolean } } {
+  const currentChannelId = params.context.From?.trim() || params.context.To?.trim() || undefined;
+  return {
+    currentChannelId,
+    hasRepliedRef: params.hasRepliedRef,
+  };
+}
+
 function normalizeOpenzaloTarget(rawTarget: string): string {
   const cleaned = rawTarget.replace(/^(openzalo|zlu):/i, "").trim();
   if (!cleaned) {
@@ -344,6 +355,8 @@ export const openzaloDock: ChannelDock = {
   },
   threading: {
     resolveReplyToMode: () => "off",
+    buildToolContext: ({ context, hasRepliedRef }) =>
+      buildOpenzaloThreadingToolContext({ context, hasRepliedRef }),
   },
 };
 
@@ -470,6 +483,8 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
   },
   threading: {
     resolveReplyToMode: () => "off",
+    buildToolContext: ({ context, hasRepliedRef }) =>
+      buildOpenzaloThreadingToolContext({ context, hasRepliedRef }),
   },
   setup: {
     resolveAccountId: ({ accountId }) => normalizeAccountId(accountId),
