@@ -200,6 +200,7 @@ openclaw message send --channel openzalo --target <threadId> --message "caption"
 
 # Video/voice are auto-detected by extension in openzalo send helpers
 # (e.g. .mp4 -> video, .mp3/.wav/.ogg/.m4a -> voice)
+# Generic file uploads (.pdf/.xlsx/.zip/...) are sent as attachment-only (no extra caption text message).
 ```
 
 ### Human Pass Mode

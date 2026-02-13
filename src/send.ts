@@ -185,19 +185,7 @@ async function sendMediaOpenzalo(
     const result = await runOpenzca(args, { profile, timeout: MEDIA_SEND_TIMEOUT_MS });
 
     if (result.ok) {
-      // msg upload has no caption flag; send caption as a follow-up text for file uploads.
-      if (command === "upload" && options.caption) {
-        const captionResult = await runOpenzca(
-          ["msg", "send", threadId.trim(), clampText(options.caption, options), ...(options.isGroup ? ["-g"] : [])],
-          { profile, timeout: MEDIA_SEND_TIMEOUT_MS },
-        );
-        if (!captionResult.ok) {
-          return {
-            ok: false,
-            error: captionResult.stderr || "File sent but failed to send caption",
-          };
-        }
-      }
+      // msg upload has no caption flag; keep file uploads attachment-only to avoid noisy follow-up text.
       return { ok: true, messageId: extractMessageId(result.stdout) };
     }
 
@@ -467,13 +455,73 @@ export async function getMemberInfoOpenzalo(
 }
 
 function extractMessageId(stdout: string): string | undefined {
-  // Try to extract message ID from output
-  const match = stdout.match(/message[_\s]?id[:\s]+(\S+)/i);
-  if (match) {
-    return match[1];
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return undefined;
   }
-  // Return first word if it looks like an ID
-  const firstWord = stdout.trim().split(/\s+/)[0];
+
+  const normalizeId = (value: unknown): string | undefined => {
+    if (typeof value === "string") {
+      const candidate = value.trim();
+      return candidate || undefined;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(Math.trunc(value));
+    }
+    return undefined;
+  };
+
+  const pickIdFromObject = (value: unknown): string | undefined => {
+    if (!value || typeof value !== "object") {
+      return undefined;
+    }
+    const row = value as Record<string, unknown>;
+    const direct =
+      normalizeId(row.messageId) ??
+      normalizeId(row.msgId) ??
+      normalizeId((row.data as Record<string, unknown> | undefined)?.messageId) ??
+      normalizeId((row.data as Record<string, unknown> | undefined)?.msgId);
+    if (direct) {
+      return direct;
+    }
+
+    const message = row.message as Record<string, unknown> | undefined;
+    const messageId = normalizeId(message?.messageId) ?? normalizeId(message?.msgId);
+    if (messageId) {
+      return messageId;
+    }
+
+    const attachment = Array.isArray(row.attachment) ? row.attachment : [];
+    for (const item of attachment) {
+      const attachmentId =
+        normalizeId((item as Record<string, unknown>)?.messageId) ??
+        normalizeId((item as Record<string, unknown>)?.msgId);
+      if (attachmentId) {
+        return attachmentId;
+      }
+    }
+
+    return undefined;
+  };
+
+  // First try JSON payloads.
+  const parsed = parseJsonOutput<unknown>(trimmed);
+  const parsedId = pickIdFromObject(parsed);
+  if (parsedId) {
+    return parsedId;
+  }
+
+  // Then support util.inspect/table-style outputs from openzca CLI.
+  const msgIdMatch = trimmed.match(/\bmsgId\s*[:=]\s*['"]?([0-9A-Za-z_-]+)/i);
+  if (msgIdMatch) {
+    return msgIdMatch[1];
+  }
+  const messageIdMatch = trimmed.match(/\bmessage[_\s]?id\s*[:=]\s*['"]?([0-9A-Za-z_-]+)/i);
+  if (messageIdMatch) {
+    return messageIdMatch[1];
+  }
+
+  const firstWord = trimmed.split(/\s+/)[0];
   if (firstWord && /^[a-zA-Z0-9_-]+$/.test(firstWord)) {
     return firstWord;
   }
