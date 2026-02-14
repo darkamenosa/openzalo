@@ -23,6 +23,7 @@ import { getOpenzaloRuntime } from "./runtime.js";
 import { readRecentMessagesOpenzalo, sendMessageOpenzalo, sendTypingOpenzalo } from "./send.js";
 import { parseJsonOutput, runOpenzca, runOpenzcaStreaming } from "./openzca.js";
 import {
+  OPENZALO_DEFAULT_GROUP_HISTORY_LIMIT,
   OPENZALO_DEFAULT_FAILURE_NOTICE_MESSAGE,
   OPENZALO_TEXT_LIMIT,
 } from "./constants.js";
@@ -70,6 +71,10 @@ type OpenzaloDispatchOutcome = {
 };
 
 type HumanPassCommand = "on" | "off";
+const CONTEXT_REFERENCE_PATTERNS = [
+  /\b(it|this|that|these|those|same|again|continue|above|before|earlier|there|then)\b/i,
+  /\b(cai do|nhu tren|o tren|ben tren|vua nay|hoi nay|tiep|tiep theo|y truoc|y kia)\b/i,
+];
 
 function normalizeOpenzaloEntry(entry: string): string {
   return entry.replace(/^(openzalo|zlu):/i, "").trim();
@@ -353,6 +358,18 @@ function resolveControlCommandBody(params: {
   const mentionPrefixedCommand = rawTrimmed.match(/^@\S+(?:\s+@\S+)*\s+(\/[a-z][\s\S]*)$/iu);
   if (mentionPrefixedCommand?.[1]) {
     return mentionPrefixedCommand[1].trim();
+  }
+
+  // Fallback for mention display names that include spaces (for example "@Nguyen Van A /new")
+  // when structured mention metadata is unavailable.
+  if (rawTrimmed.startsWith("@")) {
+    const slashIndex = rawTrimmed.indexOf("/");
+    if (slashIndex > 0) {
+      const candidate = rawTrimmed.slice(slashIndex).trim();
+      if (/^\/[a-z]/i.test(candidate)) {
+        return candidate;
+      }
+    }
   }
 
   // Fallback: when explicit mention is known but mention text offsets are unavailable,
@@ -759,8 +776,44 @@ function resolveOpenzaloHistoryLimit(params: {
   if (typeof local === "number" && Number.isFinite(local)) {
     return Math.max(0, Math.floor(local));
   }
-  // Default to no automatic group history preload; let agents fetch on demand.
-  return 0;
+  const global = params.config.messages?.groupChat?.historyLimit;
+  if (typeof global === "number" && Number.isFinite(global)) {
+    return Math.max(0, Math.floor(global));
+  }
+  // Auto-preload a recent window to provide baseline group context out of the box.
+  // Set historyLimit: 0 in config to disable this behavior.
+  return OPENZALO_DEFAULT_GROUP_HISTORY_LIMIT;
+}
+
+function shouldExpandGroupHistoryWindow(params: { body: string; hasQuote: boolean }): boolean {
+  if (params.hasQuote) {
+    return true;
+  }
+  const trimmed = params.body.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (trimmed.length <= 40) {
+    return true;
+  }
+  const normalized = trimmed.toLowerCase();
+  return CONTEXT_REFERENCE_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function resolveAdaptiveGroupHistoryLimit(params: {
+  baseLimit: number;
+  body: string;
+  hasQuote: boolean;
+}): number {
+  const base = Math.min(Math.max(Math.trunc(params.baseLimit), 0), 200);
+  if (base === 0) {
+    return 0;
+  }
+  if (!shouldExpandGroupHistoryWindow({ body: params.body, hasQuote: params.hasQuote })) {
+    return base;
+  }
+  const expanded = Math.min(Math.max(base * 3, base + 6), 50);
+  return Math.min(Math.max(expanded, 1), 200);
 }
 
 async function resolveOpenzcaUserId(
@@ -933,9 +986,29 @@ async function processMessage(
     }
   }
 
+  const mentionIds = extractMentionIds(message);
+  const normalizedBotUserId = normalizeMentionUid(botUserId);
+  const canDetectMentionByUid = Boolean(isGroup && normalizedBotUserId);
+  const wasMentionedByUid =
+    canDetectMentionByUid && normalizedBotUserId
+      ? mentionIds.includes(normalizedBotUserId)
+      : false;
+  const controlCommandBody = isGroup
+    ? resolveControlCommandBody({
+        rawBody,
+        message,
+        botUserId: normalizedBotUserId,
+        wasMentionedByUid,
+      })
+    : rawBody;
+  const commandBodyForAuth = controlCommandBody || rawBody;
+
   const dmPolicy = account.config.dmPolicy ?? "pairing";
   const configAllowFrom = (account.config.allowFrom ?? []).map((v) => String(v));
-  const shouldComputeAuth = core.channel.commands.shouldComputeCommandAuthorized(rawBody, config);
+  const shouldComputeAuth = core.channel.commands.shouldComputeCommandAuthorized(
+    commandBodyForAuth,
+    config,
+  );
   const storeAllowFrom =
     !isGroup && (dmPolicy !== "open" || shouldComputeAuth)
       ? await core.channel.pairing.readAllowFromStore("openzalo").catch(() => [])
@@ -1017,21 +1090,6 @@ async function processMessage(
     },
   });
 
-  const mentionIds = extractMentionIds(message);
-  const normalizedBotUserId = normalizeMentionUid(botUserId);
-  const canDetectMentionByUid = Boolean(isGroup && normalizedBotUserId);
-  const wasMentionedByUid =
-    canDetectMentionByUid && normalizedBotUserId
-      ? mentionIds.includes(normalizedBotUserId)
-      : false;
-  const controlCommandBody = isGroup
-    ? resolveControlCommandBody({
-        rawBody,
-        message,
-        botUserId: normalizedBotUserId,
-        wasMentionedByUid,
-      })
-    : rawBody;
   const humanPassCommand =
     parseHumanPassCommand(controlCommandBody) ?? parseHumanPassCommand(rawBody);
   const isBuiltinControlCommand = core.channel.commands.isControlCommandMessage(
@@ -1128,10 +1186,11 @@ async function processMessage(
   });
 
   if (isGroup && isControlCommand && !canRunControlCommand) {
+    const commandPreview = commandBodyForAuth.replace(/\s+/g, " ").slice(0, 80);
     logVerbose(
       core,
       runtime,
-      `openzalo: drop control command from unauthorized sender ${senderId}`,
+      `openzalo: drop control command from unauthorized sender ${senderId} command="${commandPreview}" authorized=${String(commandAuthorized)} senderAllowed=${String(senderAllowedForCommands)}`,
     );
     return;
   }
@@ -1211,7 +1270,18 @@ async function processMessage(
   }
 
   if (isGroup && historyLimit > 0) {
-    const recentHistoryLimit = Math.min(Math.max(historyLimit, 1), 200);
+    const recentHistoryLimit = resolveAdaptiveGroupHistoryLimit({
+      baseLimit: historyLimit,
+      body: rawBody,
+      hasQuote: quoteContext.hasQuote,
+    });
+    if (recentHistoryLimit > historyLimit) {
+      logVerbose(
+        core,
+        runtime,
+        `openzalo: expanding group history window ${historyLimit} -> ${recentHistoryLimit} for context-sensitive message in ${chatId}`,
+      );
+    }
     const recentGroupHistory = await fetchGroupRecentHistory({
       threadId: chatId,
       profile: account.profile,

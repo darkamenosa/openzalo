@@ -101,7 +101,7 @@ channels:
     dmPolicy: pairing # pairing | allowlist | open | disabled
     groupRequireMention: true # require @mention in group chats
     groupMentionDetectionFailure: deny # allow | deny | allow-with-warning
-    historyLimit: 0 # default: no automatic group history preload (agent can fetch on demand)
+    historyLimit: 6 # optional override (highest priority; set 0 to disable preload)
     sendFailureNotice: true # send fallback message on dispatch failure
     sendFailureMessage: Some problem occurred, could not send a reply.
     textChunkLimit: 2000 # max supported by openzca/openzalo
@@ -128,6 +128,14 @@ channels:
         profile: work
 ```
 
+Global fallback when `channels.openzalo.historyLimit` is not set:
+
+```yaml
+messages:
+  groupChat:
+    historyLimit: 8
+```
+
 ### Default Behavior (When `channels.openzalo` Is Missing)
 
 If plugin `openzalo` is enabled but `channels.openzalo` is not set in config, runtime defaults are:
@@ -137,13 +145,14 @@ If plugin `openzalo` is enabled but `channels.openzalo` is not set in config, ru
 - `groupRequireMention: true`
 - `groupMentionDetectionFailure: deny`
 - `sendFailureNotice: true`
-- `historyLimit: 0`
+- `historyLimit: channels.openzalo.historyLimit -> channels.messages.groupChat.historyLimit -> 6`
 
 Behavior summary:
 
 - Direct chat (DM): unknown users do not get normal bot replies; they receive pairing flow first.
 - Group chat: bot replies only when explicitly mentioned.
-- Group chat context: by default no recent-group preload is injected (`historyLimit: 0`); set `historyLimit > 0` to prepend recent messages automatically.
+- Group chat context: baseline preload is 6 messages (or configured `historyLimit`), and the window auto-expands for context-sensitive turns (for example short referential replies or quoted replies).
+- If more context is needed mid-reply, the agent can call action `read` with a higher `limit` for the same group conversation.
 - Mention detection: uses structured mention IDs from inbound payload (`mentionIds` / `mentions[].uid`) matched against bot user id.
 - If mention detection is unavailable while mention is required: message is denied by default.
 - Authorized control commands can bypass mention gating.
@@ -255,9 +264,33 @@ The extension registers a `openzalo` tool for AI agents:
 ```json
 {
   "action": "send",
-  "threadId": "123456",
+  "threadId": "user:123456",
   "message": "Hello from AI!",
   "isGroup": false,
+  "profile": "default"
+}
+```
+
+For group chats, prefer explicit group targets to avoid ambiguity:
+
+```json
+{
+  "action": "image",
+  "threadId": "group:5316386947725214403",
+  "url": "/Users/tuyenhx/.openclaw/workspace/avatars/em-thu-ky-avatar.jpg",
+  "message": "Avatar em Thu ne",
+  "profile": "default"
+}
+```
+
+If you must use bare numeric IDs, set `isGroup` explicitly:
+
+```json
+{
+  "action": "send",
+  "threadId": "5316386947725214403",
+  "message": "Group test",
+  "isGroup": true,
   "profile": "default"
 }
 ```

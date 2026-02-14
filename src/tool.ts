@@ -32,10 +32,19 @@ function stringEnum<T extends readonly string[]>(
 export const OpenzaloToolSchema = Type.Object(
   {
     action: stringEnum(ACTIONS, { description: `Action to perform: ${ACTIONS.join(", ")}` }),
-    threadId: Type.Optional(Type.String({ description: "Thread ID for messaging" })),
+    threadId: Type.Optional(
+      Type.String({
+        description:
+          'Thread target for messaging. Prefer "group:<id>" or "user:<id>"; bare numeric IDs require isGroup.',
+      }),
+    ),
     groupId: Type.Optional(Type.String({ description: "Group ID for group-member listing" })),
     message: Type.Optional(Type.String({ description: "Message text" })),
-    isGroup: Type.Optional(Type.Boolean({ description: "Is group chat" })),
+    isGroup: Type.Optional(
+      Type.Boolean({
+        description: "Set true for group chats (required when threadId is a bare numeric group ID).",
+      }),
+    ),
     profile: Type.Optional(Type.String({ description: "Profile name" })),
     query: Type.Optional(Type.String({ description: "Search query" })),
     url: Type.Optional(Type.String({ description: "URL for media/link" })),

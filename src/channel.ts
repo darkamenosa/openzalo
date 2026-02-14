@@ -48,7 +48,7 @@ import {
 } from "./send.js";
 import { collectOpenzaloStatusIssues } from "./status-issues.js";
 import { checkOpenzcaInstalled, parseJsonOutput, resolveOpenzcaProfileEnv, runOpenzca, runOpenzcaInteractive } from "./openzca.js";
-import { OPENZALO_TEXT_LIMIT } from "./constants.js";
+import { OPENZALO_DEFAULT_GROUP_HISTORY_LIMIT, OPENZALO_TEXT_LIMIT } from "./constants.js";
 import { getOpenzaloRuntime } from "./runtime.js";
 
 const meta = {
@@ -271,6 +271,7 @@ function resolveOpenzaloActionThread(
   const toTarget = readStringParam(params, "to");
   const threadTarget = readStringParam(params, "threadId");
   const channelTarget = readStringParam(params, "channelId");
+  const hasExplicitTarget = Boolean(toTarget || threadTarget || channelTarget);
   const contextTarget = toolContext?.currentChannelId?.trim();
   const rawTarget = toTarget ?? threadTarget ?? channelTarget ?? contextTarget;
   if (!rawTarget) {
@@ -317,6 +318,19 @@ function resolveOpenzaloActionThread(
       threadId: parsed.threadId,
       isGroup: true,
     };
+  }
+  if (chatType === "direct") {
+    return {
+      threadId: parsed.threadId,
+      isGroup: false,
+    };
+  }
+
+  const isAmbiguousNumericTarget = /^\d{3,}$/.test(parsed.threadId);
+  if (hasExplicitTarget && isAmbiguousNumericTarget) {
+    throw new Error(
+      `Ambiguous thread target "${parsed.threadId}". Use "group:${parsed.threadId}" or "user:${parsed.threadId}", or set isGroup explicitly.`,
+    );
   }
 
   return {
@@ -481,6 +495,12 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
   },
   streaming: {
     blockStreamingCoalesceDefaults: { minChars: 1500, idleMs: 1000 },
+  },
+  agentPrompt: {
+    messageToolHints: () => [
+      `- Openzalo group context: the latest ${OPENZALO_DEFAULT_GROUP_HISTORY_LIMIT} group messages are preloaded by default. If context is insufficient, call \`action=read\` with a higher \`limit\` (for example 12-30) before replying.`,
+      "- Openzalo targeting: prefer explicit IDs (`group:<id>` / `user:<id>`). Bare numeric IDs are ambiguous; set `isGroup` explicitly when needed.",
+    ],
   },
   reload: { configPrefixes: ["channels.openzalo"] },
   configSchema: buildChannelConfigSchema(OpenzaloConfigSchema),
@@ -663,7 +683,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
         const parsed = parseOpenzaloActionTarget(trimmed);
         return /^\d{3,}$/.test(parsed.threadId);
       },
-      hint: "<threadId|group:threadId|user:threadId|g-threadId|u-threadId>",
+      hint: "<group:threadId|user:threadId|g-threadId|u-threadId|threadId+isGroup>",
     },
   },
   directory: {
