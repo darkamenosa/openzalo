@@ -684,7 +684,11 @@ function resolveMediaKind(mediaType?: string): string | undefined {
 
 type OpenzaloContextHistoryEntry = {
   sender: string;
+  senderId?: string;
   body: string;
+  msgId?: string;
+  cliMsgId?: string;
+  msgType?: string;
   timestamp?: number;
 };
 
@@ -819,7 +823,11 @@ async function fetchGroupRecentHistory(params: {
     const ts = toUnixMillis(row.ts);
     entries.push({
       sender: buildSenderLabel(senderId, senderName),
+      senderId,
       body,
+      msgId: msgId ?? undefined,
+      cliMsgId: cliMsgId ?? undefined,
+      msgType: normalizeStringValue(row.msgType),
       timestamp: ts,
       sortTs: ts ?? 0,
     });
@@ -1423,7 +1431,18 @@ async function processMessage(
           }),
         )
         .join("\n");
-      ctxPayload.Body = `${historyBody}\n${body}`.trim();
+      const recentRefs = recentGroupHistory
+        .filter((entry) => entry.msgId && entry.cliMsgId)
+        .map(
+          (entry) =>
+            `- sender:${entry.senderId ?? entry.sender} msgId:${entry.msgId} cliMsgId:${entry.cliMsgId}` +
+            (entry.msgType ? ` msgType:${entry.msgType}` : ""),
+        );
+      const refsBlock =
+        recentRefs.length > 0
+          ? `\n[recent_message_refs_for_unsend]\n${recentRefs.join("\n")}`
+          : "";
+      ctxPayload.Body = `${historyBody}\n${body}${refsBlock}`.trim();
       ctxPayload.InboundHistory = recentGroupHistory.map((entry) => ({
         sender: entry.sender,
         body: entry.body,

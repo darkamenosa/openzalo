@@ -1,9 +1,15 @@
 import { Type } from "@sinclair/typebox";
 import { runOpenzca, parseJsonOutput } from "./openzca.js";
-import { sendImageOpenzalo, sendLinkOpenzalo, sendMessageOpenzalo } from "./send.js";
+import {
+  sendImageOpenzalo,
+  sendLinkOpenzalo,
+  sendMessageOpenzalo,
+  unsendMessageOpenzalo,
+} from "./send.js";
 
 const ACTIONS = [
   "send",
+  "unsend",
   "image",
   "link",
   "friends",
@@ -55,6 +61,12 @@ export const OpenzaloToolSchema = Type.Object(
         description: "Set true for group chats (required when threadId is a bare numeric group ID).",
       }),
     ),
+    msgId: Type.Optional(Type.String({ description: "Message id for unsend action" })),
+    messageId: Type.Optional(Type.String({ description: "Alias of msgId for unsend action" })),
+    cliMsgId: Type.Optional(Type.String({ description: "Client message id for unsend action" })),
+    clientMessageId: Type.Optional(
+      Type.String({ description: "Alias of cliMsgId for unsend action" }),
+    ),
     profile: Type.Optional(Type.String({ description: "Profile name" })),
     query: Type.Optional(Type.String({ description: "Search query" })),
     url: Type.Optional(Type.String({ description: "URL for media/link" })),
@@ -72,6 +84,10 @@ type ToolParams = {
   path?: string;
   filePath?: string;
   isGroup?: boolean;
+  msgId?: string;
+  messageId?: string;
+  cliMsgId?: string;
+  clientMessageId?: string;
   profile?: string;
   query?: string;
   url?: string;
@@ -185,6 +201,40 @@ export async function executeOpenzaloTool(
           messageId: result.messageId ?? result.msgId ?? null,
           msgId: result.msgId ?? result.messageId ?? null,
           cliMsgId: result.cliMsgId ?? null,
+        });
+      }
+
+      case "unsend": {
+        const target = resolveThreadTarget({
+          threadId: params.threadId,
+          isGroup: params.isGroup,
+        });
+        const msgId = params.msgId?.trim() || params.messageId?.trim();
+        const cliMsgId = params.cliMsgId?.trim() || params.clientMessageId?.trim();
+        if (!msgId || !cliMsgId) {
+          throw new Error("msgId/messageId and cliMsgId/clientMessageId are required for unsend action");
+        }
+        const result = await unsendMessageOpenzalo(
+          {
+            threadId: target.threadId,
+            msgId,
+            cliMsgId,
+          },
+          {
+            profile: params.profile,
+            isGroup: target.isGroup,
+          },
+        );
+        if (!result.ok) {
+          throw new Error(result.error || "Failed to unsend message");
+        }
+        return json({
+          success: true,
+          threadId: target.threadId,
+          isGroup: target.isGroup,
+          msgId,
+          cliMsgId,
+          data: result.output ?? null,
         });
       }
 
@@ -306,7 +356,7 @@ export async function executeOpenzaloTool(
       default: {
         params.action satisfies never;
         throw new Error(
-          `Unknown action: ${String(params.action)}. Valid actions: send, image, link, friends, groups, group-members, me, status`,
+          `Unknown action: ${String(params.action)}. Valid actions: send, unsend, image, link, friends, groups, group-members, me, status`,
         );
       }
     }

@@ -23,7 +23,7 @@ const plugin = {
         'For targets, prefer "user:<id>" or "group:<id>" (or set isGroup=true for bare numeric IDs). ' +
         "Action send supports plain text and media/file upload (image/video/voice/pdf/doc/xlsx/zip...) via media/path/filePath. " +
         "If a file path/URL is already known, send it directly via action=send instead of running extra preprocessing steps. " +
-        "Actions: send, image, link, " +
+        "Actions: send, unsend, image, link, " +
         "friends (list/search friends), groups (list groups), group-members (list members in a group), " +
         "me (profile info), status (auth check).",
       parameters: OpenzaloToolSchema,

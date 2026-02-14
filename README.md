@@ -358,7 +358,7 @@ If you must use bare numeric IDs, set `isGroup` explicitly:
 }
 ```
 
-Available actions: `send`, `image`, `link`, `friends`, `groups`, `group-members`, `me`, `status`
+Available actions: `send`, `unsend`, `image`, `link`, `friends`, `groups`, `group-members`, `me`, `status`
 
 ## Troubleshooting
 
