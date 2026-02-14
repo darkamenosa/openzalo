@@ -291,6 +291,22 @@ function isBareSessionResetCommand(raw: string): boolean {
   return normalized === "/new" || normalized === "/reset";
 }
 
+function extractSlashControlCommand(raw: string): string | undefined {
+  const normalized = normalizeControlCommandCandidate(raw);
+  if (normalized.startsWith("/")) {
+    return normalized;
+  }
+  const slashIndex = normalized.indexOf("/");
+  if (slashIndex < 0) {
+    return undefined;
+  }
+  const candidate = normalized.slice(slashIndex).trim();
+  if (!/^\/[a-z]/i.test(candidate)) {
+    return undefined;
+  }
+  return normalizeControlCommandCandidate(candidate);
+}
+
 function collectBotMentionSegments(message: ZcaMessage, botUserId?: string): OpenzaloMentionSegment[] {
   const normalizedBotUserId = normalizeMentionUid(botUserId);
   if (!normalizedBotUserId) {
@@ -389,34 +405,12 @@ function resolveControlCommandBody(params: {
     return strippedNormalized;
   }
 
-  // Fallback for text-only mentions like "@Thư /new" when structured mention
-  // offsets are not present in the inbound payload.
-  const mentionPrefixedCommand = rawTrimmed.match(/^@\S+(?:\s+@\S+)*\s+(\/[a-z][\s\S]*)$/iu);
-  if (mentionPrefixedCommand?.[1]) {
-    return normalizeControlCommandCandidate(mentionPrefixedCommand[1]);
-  }
-
-  // Fallback for mention display names that include spaces (for example "@Nguyen Van A /new")
-  // when structured mention metadata is unavailable.
-  if (rawTrimmed.startsWith("@")) {
-    const slashIndex = rawTrimmed.indexOf("/");
-    if (slashIndex > 0) {
-      const candidate = rawTrimmed.slice(slashIndex).trim();
-      if (/^\/[a-z]/i.test(candidate)) {
-        return normalizeControlCommandCandidate(candidate);
-      }
-    }
-  }
-
-  // Fallback: when explicit mention is known but mention text offsets are unavailable,
-  // attempt to parse command token from first slash.
-  if (params.wasMentionedByUid) {
-    const slashIndex = rawTrimmed.indexOf("/");
-    if (slashIndex >= 0) {
-      const candidate = rawTrimmed.slice(slashIndex).trim();
-      if (/^\/[a-z]/i.test(candidate)) {
-        return normalizeControlCommandCandidate(candidate);
-      }
+  // Fallback: parse slash command token from raw text when mention is explicit
+  // via visible "@..." text or structured mention metadata.
+  if (rawTrimmed.startsWith("@") || params.wasMentionedByUid) {
+    const extracted = extractSlashControlCommand(rawTrimmed);
+    if (extracted) {
+      return extracted;
     }
   }
 
