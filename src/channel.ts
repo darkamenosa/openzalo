@@ -168,6 +168,19 @@ type OpenzaloThreadingToolContext = {
   replyToIdFull?: string;
 };
 
+type OpenzaloUndoRef = {
+  accountId: string;
+  threadId: string;
+  isGroup: boolean;
+  msgId: string;
+  cliMsgId: string;
+  ts: number;
+};
+
+const OPENZALO_UNDO_REF_MAX_AGE_MS = 30 * 60 * 1000;
+const OPENZALO_UNDO_REF_MAX_PER_ACCOUNT = 40;
+const openzaloUndoRefCache = new Map<string, OpenzaloUndoRef[]>();
+
 function buildOpenzaloThreadingToolContext(params: {
   context: { From?: string; To?: string; ChatType?: string; ReplyToId?: string; ReplyToIdFull?: string };
   hasRepliedRef?: { value: boolean };
@@ -354,6 +367,142 @@ function readToolContextString(
   return trimmed || undefined;
 }
 
+function normalizeActionId(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(Math.trunc(value));
+  }
+  return undefined;
+}
+
+function cacheUndoRef(ref: OpenzaloUndoRef): void {
+  const list = openzaloUndoRefCache.get(ref.accountId) ?? [];
+  const deduped = list.filter(
+    (item) =>
+      !(
+        item.threadId === ref.threadId &&
+        item.isGroup === ref.isGroup &&
+        item.msgId === ref.msgId &&
+        item.cliMsgId === ref.cliMsgId
+      ),
+  );
+  deduped.unshift(ref);
+  const now = Date.now();
+  const next = deduped
+    .filter((item) => now - item.ts <= OPENZALO_UNDO_REF_MAX_AGE_MS)
+    .slice(0, OPENZALO_UNDO_REF_MAX_PER_ACCOUNT);
+  openzaloUndoRefCache.set(ref.accountId, next);
+}
+
+function findCachedUndoRef(params: {
+  accountId: string;
+  threadId?: string;
+  isGroup?: boolean;
+}): OpenzaloUndoRef | undefined {
+  const list = openzaloUndoRefCache.get(params.accountId) ?? [];
+  const now = Date.now();
+  const alive = list.filter((item) => now - item.ts <= OPENZALO_UNDO_REF_MAX_AGE_MS);
+  if (alive.length !== list.length) {
+    openzaloUndoRefCache.set(params.accountId, alive);
+  }
+  if (!params.threadId) {
+    return alive[0];
+  }
+  return alive.find(
+    (item) =>
+      item.threadId === params.threadId &&
+      (typeof params.isGroup === "boolean" ? item.isGroup === params.isGroup : true),
+  );
+}
+
+function extractUndoRefFromRecentRow(row: unknown): {
+  msgId?: string;
+  cliMsgId?: string;
+  senderId?: string;
+  ts?: number;
+} {
+  if (!row || typeof row !== "object") {
+    return {};
+  }
+  const rec = row as Record<string, unknown>;
+  const undo = rec.undo as Record<string, unknown> | undefined;
+  const data = rec.data as Record<string, unknown> | undefined;
+  const msgId =
+    normalizeActionId(undo?.msgId) ??
+    normalizeActionId(rec.msgId) ??
+    normalizeActionId(data?.msgId) ??
+    normalizeActionId(rec.messageId);
+  const cliMsgId =
+    normalizeActionId(undo?.cliMsgId) ??
+    normalizeActionId(rec.cliMsgId) ??
+    normalizeActionId(data?.cliMsgId);
+  const senderId =
+    normalizeActionId(rec.senderId) ??
+    normalizeActionId(rec.uidFrom) ??
+    normalizeActionId(data?.uidFrom) ??
+    normalizeActionId((rec.sender as Record<string, unknown> | undefined)?.id);
+  const tsRaw = rec.ts ?? data?.ts;
+  const ts =
+    typeof tsRaw === "number" && Number.isFinite(tsRaw)
+      ? tsRaw
+      : typeof tsRaw === "string" && Number.isFinite(Number(tsRaw))
+        ? Number(tsRaw)
+        : undefined;
+  return { msgId, cliMsgId, senderId, ts };
+}
+
+async function resolveLatestOwnUndoRefFromRecent(params: {
+  profile: string;
+  threadId: string;
+  isGroup: boolean;
+  botUserId?: string;
+}): Promise<{ msgId: string; cliMsgId: string } | undefined> {
+  const recent = await readRecentMessagesOpenzalo(params.threadId, {
+    profile: params.profile,
+    isGroup: params.isGroup,
+    count: 30,
+  });
+  if (!recent.ok) {
+    return undefined;
+  }
+  const payload = (recent.output ?? {}) as Record<string, unknown>;
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  if (messages.length === 0) {
+    return undefined;
+  }
+
+  let best:
+    | {
+        msgId: string;
+        cliMsgId: string;
+        score: number;
+      }
+    | undefined;
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const row = messages[index];
+    const parsed = extractUndoRefFromRecentRow(row);
+    if (!parsed.msgId || !parsed.cliMsgId) {
+      continue;
+    }
+    if (params.botUserId && parsed.senderId && parsed.senderId !== params.botUserId) {
+      continue;
+    }
+    const tsScore = typeof parsed.ts === "number" ? parsed.ts : Number.MAX_SAFE_INTEGER - index;
+    if (!best || tsScore > best.score) {
+      best = { msgId: parsed.msgId, cliMsgId: parsed.cliMsgId, score: tsScore };
+    }
+  }
+
+  if (!best) {
+    return undefined;
+  }
+  return { msgId: best.msgId, cliMsgId: best.cliMsgId };
+}
+
 function resolveOpenzaloMediaMaxBytes(cfg: OpenClawConfig, accountId?: string | null): number | undefined {
   return resolveChannelMediaMaxBytes({
     cfg,
@@ -500,6 +649,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
     messageToolHints: () => [
       `- Openzalo group context: the latest ${OPENZALO_DEFAULT_GROUP_HISTORY_LIMIT} group messages are preloaded by default. If context is insufficient, call \`action=read\` with a higher \`limit\` (for example 12-30) before replying.`,
       "- Openzalo targeting: prefer explicit IDs (`group:<id>` / `user:<id>`). Bare numeric IDs are ambiguous; set `isGroup` explicitly when needed.",
+      "- Openzalo unsend: after `action=send`, keep the returned `undo` payload (`msgId`/`messageId` + `cliMsgId` + thread) and reuse it for `action=unsend`.",
     ],
   },
   reload: { configPrefixes: ["channels.openzalo"] },
@@ -908,11 +1058,33 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
         if (!result.ok) {
           throw new Error(result.error || "Failed to send message");
         }
+        const sentMsgId = result.messageId ?? result.msgId;
+        if (sentMsgId && result.cliMsgId) {
+          cacheUndoRef({
+            accountId: account.accountId,
+            threadId: target.threadId,
+            isGroup: target.isGroup,
+            msgId: sentMsgId,
+            cliMsgId: result.cliMsgId,
+            ts: Date.now(),
+          });
+        }
         return jsonResult({
           ok: true,
           action: "send",
           threadId: target.threadId,
-          messageId: result.messageId ?? null,
+          messageId: sentMsgId ?? null,
+          msgId: sentMsgId ?? null,
+          cliMsgId: result.cliMsgId ?? null,
+          undo:
+            sentMsgId && result.cliMsgId
+              ? {
+                  msgId: sentMsgId,
+                  cliMsgId: result.cliMsgId,
+                  threadId: target.threadId,
+                  isGroup: target.isGroup,
+                }
+              : null,
         });
       }
 
@@ -1086,8 +1258,13 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
         if (!actionGate("messages")) {
           throw new Error("Openzalo unsend action is disabled via actions.messages.");
         }
-        const target = resolveOpenzaloActionThread(params, toolContext);
-        const msgId =
+        let target = resolveOpenzaloActionThread(params, toolContext);
+        const hasExplicitTarget = Boolean(
+          readStringParam(params, "to") ??
+            readStringParam(params, "threadId") ??
+            readStringParam(params, "channelId"),
+        );
+        let msgId =
           readActionMessageField(params, "msgId") ??
           readActionMessageField(params, "messageId") ??
           readActionMessageField(params, "globalMsgId") ??
@@ -1096,7 +1273,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
           readStringParam(params, "messageId") ??
           readStringParam(params, "replyToIdFull") ??
           readToolContextString(toolContext, "replyToIdFull");
-        const cliMsgId =
+        let cliMsgId =
           readActionMessageField(params, "cliMsgId") ??
           readActionMessageField(params, "clientMessageId") ??
           readActionMessageField(params, "replyToId") ??
@@ -1105,8 +1282,52 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
           readStringParam(params, "replyToId") ??
           readToolContextString(toolContext, "replyToId");
         if (!msgId || !cliMsgId) {
+          const cachedForTarget = findCachedUndoRef({
+            accountId: account.accountId,
+            threadId: target.threadId,
+            isGroup: target.isGroup,
+          });
+          if (cachedForTarget) {
+            msgId = msgId ?? cachedForTarget.msgId;
+            cliMsgId = cliMsgId ?? cachedForTarget.cliMsgId;
+          }
+        }
+        if ((!msgId || !cliMsgId) && !hasExplicitTarget) {
+          const cachedLatest = findCachedUndoRef({ accountId: account.accountId });
+          if (cachedLatest) {
+            target = {
+              threadId: cachedLatest.threadId,
+              isGroup: cachedLatest.isGroup,
+            };
+            msgId = msgId ?? cachedLatest.msgId;
+            cliMsgId = cliMsgId ?? cachedLatest.cliMsgId;
+          }
+        }
+        if (!msgId || !cliMsgId) {
+          const me = await getZcaUserInfo(account.profile);
+          const botUserId = normalizeActionId(me?.userId);
+          const recentRef = await resolveLatestOwnUndoRefFromRecent({
+            profile: account.profile,
+            threadId: target.threadId,
+            isGroup: target.isGroup,
+            botUserId,
+          });
+          if (recentRef) {
+            msgId = msgId ?? recentRef.msgId;
+            cliMsgId = cliMsgId ?? recentRef.cliMsgId;
+            cacheUndoRef({
+              accountId: account.accountId,
+              threadId: target.threadId,
+              isGroup: target.isGroup,
+              msgId: recentRef.msgId,
+              cliMsgId: recentRef.cliMsgId,
+              ts: Date.now(),
+            });
+          }
+        }
+        if (!msgId || !cliMsgId) {
           throw new Error(
-            "msgId and cliMsgId required for unsend. Reply directly to the target message or provide both IDs.",
+            "Could not resolve msgId/cliMsgId for unsend. Reply directly to the target message, provide both IDs, or specify the target thread/group explicitly.",
           );
         }
         const result = await unsendMessageOpenzalo(
@@ -1235,7 +1456,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
       return {
         channel: "openzalo",
         ok: result.ok,
-        messageId: result.messageId ?? "",
+        messageId: result.messageId ?? result.msgId ?? "",
         error: result.error ? new Error(result.error) : undefined,
       };
     },
@@ -1257,7 +1478,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
       return {
         channel: "openzalo",
         ok: result.ok,
-        messageId: result.messageId ?? "",
+        messageId: result.messageId ?? result.msgId ?? "",
         error: result.error ? new Error(result.error) : undefined,
       };
     },
