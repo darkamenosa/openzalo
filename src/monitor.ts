@@ -688,18 +688,30 @@ type OpenzaloContextHistoryEntry = {
   body: string;
   msgId?: string;
   cliMsgId?: string;
+  threadId?: string;
+  threadType?: string;
   msgType?: string;
   timestamp?: number;
 };
 
 type OpenzaloRecentMessageRow = {
   msgId?: unknown;
+  messageId?: unknown;
   cliMsgId?: unknown;
+  threadId?: unknown;
+  threadType?: unknown;
+  uidFrom?: unknown;
+  fromId?: unknown;
   senderId?: unknown;
   senderName?: unknown;
+  group?: unknown;
   ts?: unknown;
   msgType?: unknown;
   content?: unknown;
+  msg?: unknown;
+  message?: unknown;
+  data?: unknown;
+  undo?: unknown;
 };
 
 type OpenzaloRecentMessagesPayload = {
@@ -728,6 +740,107 @@ function toUnixMillis(value: unknown): number | undefined {
   return Math.trunc(parsed * 1000);
 }
 
+type OpenzaloRecentMessageRefs = {
+  msgId?: string;
+  cliMsgId?: string;
+  threadId?: string;
+  threadType?: string;
+  senderId?: string;
+  senderName?: string;
+  msgType?: string;
+  tsRaw?: string;
+  timestampMs?: number;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function normalizeIdentifier(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(Math.trunc(value));
+  }
+  return undefined;
+}
+
+function normalizeThreadType(value: unknown): string | undefined {
+  const normalized = normalizeStringValue(value);
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized.toLowerCase();
+}
+
+function resolveThreadTypeFromGroupHint(value: unknown): string | undefined {
+  if (typeof value !== "boolean") {
+    return undefined;
+  }
+  return value ? "group" : "user";
+}
+
+function extractRecentMessageRefs(
+  row: OpenzaloRecentMessageRow,
+  fallbackThreadId: string,
+): OpenzaloRecentMessageRefs {
+  const data = asRecord(row.data);
+  const undo = asRecord(row.undo);
+
+  const msgId =
+    normalizeIdentifier(row.msgId) ??
+    normalizeIdentifier(row.messageId) ??
+    normalizeIdentifier(data?.msgId) ??
+    normalizeIdentifier(data?.messageId) ??
+    normalizeIdentifier(undo?.msgId);
+  const cliMsgId =
+    normalizeIdentifier(row.cliMsgId) ??
+    normalizeIdentifier(data?.cliMsgId) ??
+    normalizeIdentifier(undo?.cliMsgId);
+  const threadId =
+    normalizeIdentifier(row.threadId) ??
+    normalizeIdentifier(data?.threadId) ??
+    normalizeIdentifier(undo?.threadId) ??
+    fallbackThreadId;
+  const threadType =
+    normalizeThreadType(row.threadType) ??
+    normalizeThreadType(data?.threadType) ??
+    resolveThreadTypeFromGroupHint(row.group) ??
+    resolveThreadTypeFromGroupHint(data?.group) ??
+    resolveThreadTypeFromGroupHint(undo?.group);
+  const senderId =
+    normalizeIdentifier(row.senderId) ??
+    normalizeIdentifier(row.uidFrom) ??
+    normalizeIdentifier(row.fromId) ??
+    normalizeIdentifier(data?.senderId) ??
+    normalizeIdentifier(data?.uidFrom) ??
+    normalizeIdentifier(data?.fromId);
+  const senderName =
+    normalizeStringValue(row.senderName) ??
+    normalizeStringValue(data?.senderName) ??
+    normalizeStringValue(data?.senderDisplayName);
+  const msgType = normalizeStringValue(row.msgType) ?? normalizeStringValue(data?.msgType);
+  const tsRaw = normalizeIdentifier(row.ts) ?? normalizeIdentifier(data?.ts);
+  const timestampMs = toUnixMillis(row.ts ?? data?.ts);
+
+  return {
+    msgId,
+    cliMsgId,
+    threadId,
+    threadType,
+    senderId,
+    senderName,
+    msgType,
+    tsRaw,
+    timestampMs,
+  };
+}
+
 function stringifyCompact(value: unknown): string {
   if (value === undefined || value === null) {
     return "";
@@ -749,22 +862,36 @@ function truncateContextText(value: string, maxChars = 1200): string {
   return `${value.slice(0, maxChars)}...`;
 }
 
-function buildRecentHistoryBody(row: OpenzaloRecentMessageRow): string | null {
+function buildRecentHistoryBody(row: OpenzaloRecentMessageRow, refs: OpenzaloRecentMessageRefs): string | null {
   const payloadParts: string[] = [];
-  const content = stringifyCompact(row.content).trim();
+  const data = asRecord(row.data);
+  const contentSource = row.content ?? row.msg ?? row.message ?? data?.content ?? data?.msg ?? data?.message;
+  const content = stringifyCompact(contentSource).trim();
   if (content) {
     payloadParts.push(truncateContextText(content));
   }
 
-  const refs: string[] = [];
-  const msgId = normalizeStringValue(row.msgId);
-  const cliMsgId = normalizeStringValue(row.cliMsgId);
-  const msgType = normalizeStringValue(row.msgType);
-  if (msgId) refs.push(`msgId:${msgId}`);
-  if (cliMsgId) refs.push(`cliMsgId:${cliMsgId}`);
-  if (msgType) refs.push(`msgType:${msgType}`);
-  if (refs.length > 0) {
-    payloadParts.push(`[${refs.join(" ")}]`);
+  const compactRefs: string[] = [];
+  if (refs.msgId) compactRefs.push(`msgId:${refs.msgId}`);
+  if (refs.cliMsgId) compactRefs.push(`cliMsgId:${refs.cliMsgId}`);
+  if (refs.threadId) compactRefs.push(`threadId:${refs.threadId}`);
+  if (refs.threadType) compactRefs.push(`threadType:${refs.threadType}`);
+  if (refs.msgType) compactRefs.push(`msgType:${refs.msgType}`);
+  if (compactRefs.length > 0) {
+    payloadParts.push(`[${compactRefs.join(" ")}]`);
+  }
+
+  // Keep a strict machine-readable line so unsend can recover ids reliably.
+  if (refs.msgId || refs.cliMsgId) {
+    const meta: Record<string, string> = {};
+    if (refs.msgId) meta.msgId = refs.msgId;
+    if (refs.cliMsgId) meta.cliMsgId = refs.cliMsgId;
+    if (refs.threadId) meta.threadId = refs.threadId;
+    if (refs.threadType) meta.threadType = refs.threadType;
+    if (refs.senderId) meta.senderId = refs.senderId;
+    if (refs.msgType) meta.msgType = refs.msgType;
+    if (refs.tsRaw) meta.ts = refs.tsRaw;
+    payloadParts.push(`[openzalo_message_meta] ${JSON.stringify(meta)}`);
   }
 
   if (payloadParts.length === 0) {
@@ -807,27 +934,30 @@ async function fetchGroupRecentHistory(params: {
   const currentCliMsgId = normalizeStringValue(params.currentCliMsgId);
   const entries: Array<OpenzaloContextHistoryEntry & { sortTs: number }> = [];
   for (const row of rows) {
-    const msgId = normalizeStringValue(row.msgId);
-    const cliMsgId = normalizeStringValue(row.cliMsgId);
+    const refs = extractRecentMessageRefs(row, params.threadId);
+    const msgId = refs.msgId;
+    const cliMsgId = refs.cliMsgId;
     if ((currentMsgId && msgId === currentMsgId) || (currentCliMsgId && cliMsgId === currentCliMsgId)) {
       continue;
     }
 
-    const senderId = normalizeStringValue(row.senderId) ?? "unknown";
-    const senderName = normalizeStringValue(row.senderName);
-    const body = buildRecentHistoryBody(row);
+    const senderId = refs.senderId ?? "unknown";
+    const senderName = refs.senderName;
+    const body = buildRecentHistoryBody(row, refs);
     if (!body) {
       continue;
     }
 
-    const ts = toUnixMillis(row.ts);
+    const ts = refs.timestampMs;
     entries.push({
       sender: buildSenderLabel(senderId, senderName),
       senderId,
       body,
       msgId: msgId ?? undefined,
       cliMsgId: cliMsgId ?? undefined,
-      msgType: normalizeStringValue(row.msgType),
+      threadId: refs.threadId,
+      threadType: refs.threadType,
+      msgType: refs.msgType,
       timestamp: ts,
       sortTs: ts ?? 0,
     });
@@ -1436,6 +1566,8 @@ async function processMessage(
         .map(
           (entry) =>
             `- sender:${entry.senderId ?? entry.sender} msgId:${entry.msgId} cliMsgId:${entry.cliMsgId}` +
+            (entry.threadId ? ` threadId:${entry.threadId}` : "") +
+            (entry.threadType ? ` threadType:${entry.threadType}` : "") +
             (entry.msgType ? ` msgType:${entry.msgType}` : ""),
         );
       const refsBlock =
