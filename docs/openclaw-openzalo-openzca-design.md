@@ -93,3 +93,16 @@ Rationale:
 
 - `/Users/tuyenhx/Workspace/cli/openzca` currently has local changes in `src/cli.ts`.
 - Because of existing uncommitted work, CLI edits should be coordinated carefully before patching.
+
+## 8) Send succeeded but UI still shows error (false negative)
+
+Observed issue:
+- In some `msg upload`/`msg image` paths, the message/file is delivered but CLI can still exit non-zero (or emit noisy stderr), causing plugin to report failure.
+
+Plugin-side mitigation:
+- For outbound send/media/link paths, treat result as success when output contains send identifiers (`msgId`/`cliMsgId`) or explicit success flags (`success=true` / `status=ok|success`) even if exit code is non-zero.
+- Keep hard-fail behavior when no success evidence exists.
+
+Why this improves UX:
+- Avoids misleading "send failed" UI when users already received the file.
+- Preserves real error reporting for genuine delivery failures.

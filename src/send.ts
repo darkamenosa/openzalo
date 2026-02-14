@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 import { resolveOpenzcaProfileEnv, runOpenzca, parseJsonOutput } from "./openzca.js";
 import { OPENZALO_TEXT_LIMIT } from "./constants.js";
+import type { ZcaResult } from "./types.js";
 
 export type OpenzaloSendOptions = {
   profile?: string;
@@ -30,6 +31,56 @@ const MEDIA_SEND_TIMEOUT_MS = 120000;
 const VIDEO_EXTENSIONS = /\.(mp4|mov|avi|webm|mkv)$/i;
 const AUDIO_EXTENSIONS = /\.(aac|mp3|wav|ogg|m4a|flac)$/i;
 const IMAGE_EXTENSIONS = /\.(jpg|jpeg|png|gif|bmp|webp|heic|heif|avif)$/i;
+
+function normalizeOpenzcaError(stderr: string, fallback: string): string {
+  const trimmed = stderr.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+  const lines = trimmed
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const cleaned = lines[index].replace(/^error:\s*/i, "").trim();
+    if (cleaned) {
+      return cleaned;
+    }
+  }
+  return fallback;
+}
+
+function isRecoverableSuccessfulSendResult(result: ZcaResult): boolean {
+  if (result.ok) {
+    return true;
+  }
+
+  const refs = extractMessageRefs(result.stdout);
+  if (refs.msgId || refs.cliMsgId) {
+    return true;
+  }
+
+  const parsed = parseJsonOutput<unknown>(result.stdout);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return false;
+  }
+  const row = parsed as Record<string, unknown>;
+  if (row.success === true) {
+    return true;
+  }
+  const status = typeof row.status === "string" ? row.status.trim().toLowerCase() : "";
+  return status === "ok" || status === "success";
+}
+
+function resolveSendCommandResult(result: ZcaResult, fallbackError: string): OpenzaloSendResult {
+  if (result.ok || isRecoverableSuccessfulSendResult(result)) {
+    return buildSendSuccess(result.stdout);
+  }
+  return {
+    ok: false,
+    error: normalizeOpenzcaError(result.stderr, fallbackError),
+  };
+}
 
 function resolveMaxChars(options: OpenzaloSendOptions): number {
   const candidate = options.maxChars;
@@ -101,12 +152,7 @@ export async function sendMessageOpenzalo(
 
   try {
     const result = await runOpenzca(args, { profile });
-
-    if (result.ok) {
-      return buildSendSuccess(result.stdout);
-    }
-
-    return { ok: false, error: result.stderr || "Failed to send message" };
+    return resolveSendCommandResult(result, "Failed to send message");
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -187,18 +233,11 @@ async function sendMediaOpenzalo(
 
   try {
     const result = await runOpenzca(args, { profile, timeout: MEDIA_SEND_TIMEOUT_MS });
-
-    if (result.ok) {
-      // msg upload has no caption flag; keep file uploads attachment-only to avoid noisy follow-up text.
-      return buildSendSuccess(result.stdout);
-    }
-
-    return {
-      ok: false,
-      error:
-        result.stderr ||
-        (command === "upload" ? "Failed to upload file" : `Failed to send ${command}`),
-    };
+    // msg upload has no caption flag; keep file uploads attachment-only to avoid noisy follow-up text.
+    return resolveSendCommandResult(
+      result,
+      command === "upload" ? "Failed to upload file" : `Failed to send ${command}`,
+    );
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -224,10 +263,7 @@ export async function sendImageOpenzalo(
 
   try {
     const result = await runOpenzca(args, { profile, timeout: MEDIA_SEND_TIMEOUT_MS });
-    if (result.ok) {
-      return buildSendSuccess(result.stdout);
-    }
-    return { ok: false, error: result.stderr || "Failed to send image" };
+    return resolveSendCommandResult(result, "Failed to send image");
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -246,10 +282,7 @@ export async function sendLinkOpenzalo(
 
   try {
     const result = await runOpenzca(args, { profile });
-    if (result.ok) {
-      return buildSendSuccess(result.stdout);
-    }
-    return { ok: false, error: result.stderr || "Failed to send link" };
+    return resolveSendCommandResult(result, "Failed to send link");
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

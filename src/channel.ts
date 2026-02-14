@@ -649,6 +649,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
     messageToolHints: () => [
       `- Openzalo group context: the latest ${OPENZALO_DEFAULT_GROUP_HISTORY_LIMIT} group messages are preloaded by default. If context is insufficient, call \`action=read\` with a higher \`limit\` (for example 12-30) before replying.`,
       "- Openzalo targeting: prefer explicit IDs (`group:<id>` / `user:<id>`). Bare numeric IDs are ambiguous; set `isGroup` explicitly when needed.",
+      "- Openzalo media/file send: if a valid local path or URL is already available, call `action=send` directly with `media`/`path`/`filePath`. Avoid extra prep/tool steps unless explicitly requested.",
       "- Openzalo unsend: after `action=send`, keep the returned `undo` payload (`msgId`/`messageId` + `cliMsgId` + thread) and reuse it for `action=unsend`.",
     ],
   },
