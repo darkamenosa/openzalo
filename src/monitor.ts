@@ -286,6 +286,11 @@ function normalizeControlCommandCandidate(raw: string): string {
   return `${command} ${rest}`;
 }
 
+function isBareSessionResetCommand(raw: string): boolean {
+  const normalized = normalizeControlCommandCandidate(raw).toLowerCase();
+  return normalized === "/new" || normalized === "/reset";
+}
+
 function collectBotMentionSegments(message: ZcaMessage, botUserId?: string): OpenzaloMentionSegment[] {
   const normalizedBotUserId = normalizeMentionUid(botUserId);
   if (!normalizedBotUserId) {
@@ -1122,9 +1127,14 @@ async function processMessage(
     config,
   );
   const isControlCommand = isBuiltinControlCommand || humanPassCommand !== null;
-  const canManageHumanPass = commandAuthorized === true || senderAllowedForCommands;
+  const shouldForceAuthorizeMentionReset =
+    isGroup &&
+    isBareSessionResetCommand(controlCommandBody || rawBody) &&
+    rawBody.trim().startsWith("@");
+  const effectiveCommandAuthorized = commandAuthorized === true || shouldForceAuthorizeMentionReset;
+  const canManageHumanPass = effectiveCommandAuthorized || senderAllowedForCommands;
   const canRunControlCommand =
-    commandAuthorized === true || (humanPassCommand !== null && canManageHumanPass);
+    effectiveCommandAuthorized || (humanPassCommand !== null && canManageHumanPass);
   const shouldRequireMention = isGroup
       ? core.channel.groups.resolveRequireMention({
           cfg: config,
@@ -1142,7 +1152,7 @@ async function processMessage(
     logVerbose(
       core,
       runtime,
-      `openzalo: control parse raw="${rawPreview}" parsed="${parsedPreview}" builtin=${String(isBuiltinControlCommand)} auth=${String(commandAuthorized)} mentionedByUid=${String(wasMentionedByUid)} detectByUid=${String(canDetectMentionByUid)}`,
+      `openzalo: control parse raw="${rawPreview}" parsed="${parsedPreview}" builtin=${String(isBuiltinControlCommand)} auth=${String(commandAuthorized)} effectiveAuth=${String(effectiveCommandAuthorized)} mentionedByUid=${String(wasMentionedByUid)} detectByUid=${String(canDetectMentionByUid)}`,
     );
   }
 
@@ -1188,7 +1198,7 @@ async function processMessage(
     GroupChannel: isGroup ? `group:${chatId}` : undefined,
     SenderName: senderName || undefined,
     SenderId: senderId,
-    CommandAuthorized: commandAuthorized,
+    CommandAuthorized: effectiveCommandAuthorized,
     WasMentioned: isGroup ? effectiveWasMentioned : undefined,
     Provider: "openzalo",
     Surface: "openzalo",
@@ -1224,7 +1234,7 @@ async function processMessage(
     logVerbose(
       core,
       runtime,
-      `openzalo: drop control command from unauthorized sender ${senderId} command="${commandPreview}" authorized=${String(commandAuthorized)} senderAllowed=${String(senderAllowedForCommands)}`,
+      `openzalo: drop control command from unauthorized sender ${senderId} command="${commandPreview}" authorized=${String(commandAuthorized)} effectiveAuthorized=${String(effectiveCommandAuthorized)} senderAllowed=${String(senderAllowedForCommands)}`,
     );
     return;
   }
