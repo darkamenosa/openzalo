@@ -262,6 +262,13 @@ type OpenzaloMentionSegment = {
   text?: string;
 };
 
+type ControlCommandParseSource = "raw" | "stripped" | "raw-extracted" | "fallback";
+
+type ControlCommandResolution = {
+  body: string;
+  source: ControlCommandParseSource;
+};
+
 function normalizeControlCommandCandidate(raw: string): string {
   const cleaned = raw
     .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
@@ -387,10 +394,10 @@ function resolveControlCommandBody(params: {
   message: ZcaMessage;
   botUserId?: string;
   wasMentionedByUid: boolean;
-}): string {
+}): ControlCommandResolution {
   const rawTrimmed = normalizeControlCommandCandidate(params.rawBody);
   if (rawTrimmed.startsWith("/")) {
-    return rawTrimmed;
+    return { body: rawTrimmed, source: "raw" };
   }
   const stripped = stripBotMentionsFromBody({
     rawBody: params.rawBody,
@@ -402,7 +409,7 @@ function resolveControlCommandBody(params: {
   // Some payloads provide mention pos/len offsets that can clip adjacent chars
   // (for example "@Thư /new" -> "ew"), so avoid early-returning non-command tails.
   if (strippedNormalized.startsWith("/")) {
-    return strippedNormalized;
+    return { body: strippedNormalized, source: "stripped" };
   }
 
   // Fallback: parse slash command token from raw text when mention is explicit
@@ -410,11 +417,11 @@ function resolveControlCommandBody(params: {
   if (rawTrimmed.startsWith("@") || params.wasMentionedByUid) {
     const extracted = extractSlashControlCommand(rawTrimmed);
     if (extracted) {
-      return extracted;
+      return { body: extracted, source: "raw-extracted" };
     }
   }
 
-  return strippedNormalized || rawTrimmed;
+  return { body: strippedNormalized || rawTrimmed, source: "fallback" };
 }
 
 function normalizeMentionUid(value: unknown): string | undefined {
@@ -1023,14 +1030,15 @@ async function processMessage(
     canDetectMentionByUid && normalizedBotUserId
       ? mentionIds.includes(normalizedBotUserId)
       : false;
-  const controlCommandBody = isGroup
+  const controlCommandResolution = isGroup
     ? resolveControlCommandBody({
         rawBody,
         message,
         botUserId: normalizedBotUserId,
         wasMentionedByUid,
       })
-    : rawBody;
+    : { body: rawBody, source: "raw" as const };
+  const controlCommandBody = controlCommandResolution.body;
   const commandBodyForAuth = controlCommandBody || rawBody;
 
   const dmPolicy = account.config.dmPolicy ?? "pairing";
@@ -1146,11 +1154,12 @@ async function processMessage(
   const shouldBypassMention = isControlCommand && shouldRequireMention && canRunControlCommand;
   const canDetectMention = canDetectMentionByUid;
   const effectiveWasMentioned = shouldBypassMention || wasMentionedByUid;
-  if (isGroup && /\/(?:new|reset)\b/i.test(rawBody)) {
+  const shouldTraceSessionReset = isGroup && /\/(?:new|reset)\b/i.test(rawBody);
+  if (shouldTraceSessionReset) {
     const rawPreview = rawBody.replace(/\s+/g, " ").slice(0, 120);
     const parsedPreview = (controlCommandBody || "").replace(/\s+/g, " ").slice(0, 120);
     runtime.log?.(
-      `[openzalo] openzalo: control parse raw="${rawPreview}" parsed="${parsedPreview}" builtin=${String(isBuiltinControlCommand)} auth=${String(commandAuthorized)} effectiveAuth=${String(effectiveCommandAuthorized)} mentionedByUid=${String(wasMentionedByUid)} detectByUid=${String(canDetectMentionByUid)}`,
+      `[openzalo] openzalo: control parse raw="${rawPreview}" parsed="${parsedPreview}" source=${controlCommandResolution.source} builtin=${String(isBuiltinControlCommand)} isControl=${String(isControlCommand)} canRun=${String(canRunControlCommand)} requireMention=${String(shouldRequireMention)} bypassMention=${String(shouldBypassMention)} auth=${String(commandAuthorized)} effectiveAuth=${String(effectiveCommandAuthorized)} mentionedByUid=${String(wasMentionedByUid)} effectiveMentioned=${String(effectiveWasMentioned)} detectByUid=${String(canDetectMentionByUid)}`,
     );
   }
 
@@ -1229,11 +1238,15 @@ async function processMessage(
 
   if (isGroup && isControlCommand && !canRunControlCommand) {
     const commandPreview = commandBodyForAuth.replace(/\s+/g, " ").slice(0, 80);
-    logVerbose(
-      core,
-      runtime,
-      `openzalo: drop control command from unauthorized sender ${senderId} command="${commandPreview}" authorized=${String(commandAuthorized)} effectiveAuthorized=${String(effectiveCommandAuthorized)} senderAllowed=${String(senderAllowedForCommands)}`,
-    );
+    const deniedMessage =
+      `openzalo: drop control command from unauthorized sender ${senderId} ` +
+      `command="${commandPreview}" authorized=${String(commandAuthorized)} ` +
+      `effectiveAuthorized=${String(effectiveCommandAuthorized)} senderAllowed=${String(senderAllowedForCommands)}`;
+    if (shouldTraceSessionReset) {
+      runtime.log?.(`[openzalo] ${deniedMessage}`);
+    } else {
+      logVerbose(core, runtime, deniedMessage);
+    }
     return;
   }
 
@@ -1277,7 +1290,13 @@ async function processMessage(
       logVerbose(core, runtime, `openzalo: bypass mention gating for authorized control command: ${chatId}`);
     } else if (canDetectMention) {
       if (!effectiveWasMentioned) {
-        logVerbose(core, runtime, `openzalo: skip group message (mention required): ${chatId}`);
+        if (shouldTraceSessionReset) {
+          runtime.log?.(
+            `[openzalo] openzalo: skip group message (mention required): ${chatId} command="${commandBodyForAuth.replace(/\s+/g, " ").slice(0, 80)}"`,
+          );
+        } else {
+          logVerbose(core, runtime, `openzalo: skip group message (mention required): ${chatId}`);
+        }
         return;
       }
     } else {

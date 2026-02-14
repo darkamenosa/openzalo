@@ -226,6 +226,57 @@ Human pass mode lets a human take over the conversation temporarily.
 The listener runs inside the Gateway when the channel is enabled. For debugging,
 use `openclaw channels logs --channel openzalo` or run `openzca listen` directly.
 
+### Logging and Debugging
+
+Use this when `/new` or mention parsing does not behave as expected.
+
+1. Ensure Gateway file log level is `debug` (this also enables `logVerbose()`-gated lines):
+
+```json
+{
+  "logging": {
+    "level": "debug",
+    "consoleLevel": "debug"
+  }
+}
+```
+
+2. Restart Gateway after config changes.
+
+3. Inspect channel logs:
+
+```bash
+openclaw channels logs --channel openzalo --lines 500
+```
+
+4. Or tail the raw JSONL file directly (best for deep debugging):
+
+```bash
+LOG_FILE="$(ls -t /tmp/openclaw/openclaw-*.log | head -1)"
+tail -f "$LOG_FILE"
+```
+
+Raw file lines are structured JSON where:
+
+- field `"0"` = structured subsystem metadata (`{"subsystem":"..."}`)
+- field `"1"` = human-readable log message
+- field `"_meta.logLevelName"` = `DEBUG`/`INFO`/`WARN`/`ERROR`
+
+Filter only openzalo command parse traces:
+
+```bash
+tail -f "$LOG_FILE" \
+  | jq -cr 'select(((."0" // "") | tostring | test("openzalo")) and ((."1" // "") | tostring | test("control parse")))'
+```
+
+For group messages containing `/new` or `/reset`, Openzalo now always emits an
+info log like:
+
+`openzalo: control parse raw="..." parsed="..." source=... builtin=... isControl=... canRun=...`
+
+These parse traces are always-on (not gated by `logVerbose()`), so they appear
+even when verbose logging is off.
+
 ### Data Access
 
 ```bash
