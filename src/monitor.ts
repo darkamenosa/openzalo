@@ -1149,10 +1149,8 @@ async function processMessage(
   if (isGroup && /\/(?:new|reset)\b/i.test(rawBody)) {
     const rawPreview = rawBody.replace(/\s+/g, " ").slice(0, 120);
     const parsedPreview = (controlCommandBody || "").replace(/\s+/g, " ").slice(0, 120);
-    logVerbose(
-      core,
-      runtime,
-      `openzalo: control parse raw="${rawPreview}" parsed="${parsedPreview}" builtin=${String(isBuiltinControlCommand)} auth=${String(commandAuthorized)} effectiveAuth=${String(effectiveCommandAuthorized)} mentionedByUid=${String(wasMentionedByUid)} detectByUid=${String(canDetectMentionByUid)}`,
+    runtime.log?.(
+      `[openzalo] openzalo: control parse raw="${rawPreview}" parsed="${parsedPreview}" builtin=${String(isBuiltinControlCommand)} auth=${String(commandAuthorized)} effectiveAuth=${String(effectiveCommandAuthorized)} mentionedByUid=${String(wasMentionedByUid)} detectByUid=${String(canDetectMentionByUid)}`,
     );
   }
 
