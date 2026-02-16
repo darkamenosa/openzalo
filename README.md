@@ -152,11 +152,20 @@ Behavior summary:
 
 - Direct chat (DM): unknown users do not get normal bot replies; they receive pairing flow first.
 - Group chat: bot replies only in allowlisted groups, and only when explicitly mentioned.
+- Optional sender restriction: set `channels.openzalo.groups.<group-id>.allowFrom` to limit replies to specific group members. If omitted, all members in that allowlisted group can trigger replies (subject to mention rules).
+- Group command auth: when `groups.<group-id>.allowFrom` is set, `/...` control-command authorization for that group uses this sender allowlist; otherwise it falls back to account-level `channels.openzalo.allowFrom`.
 - Group chat context: baseline preload is 6 messages (or configured `historyLimit`), and the window auto-expands for context-sensitive turns (for example short referential replies or quoted replies).
 - If more context is needed mid-reply, the agent can call action `read` with a higher `limit` for the same group conversation.
 - Mention detection: uses structured mention IDs from inbound payload (`mentionIds` / `mentions[].uid`) matched against bot user id.
 - If mention detection is unavailable while mention is required: message is denied by default.
 - Authorized control commands can bypass mention gating.
+
+Triggering examples (group):
+
+- Case A (`allowFrom` unset): group is allowlisted + member `@mentions` bot -> reply is allowed for any member.
+- Case B (`allowFrom` set): group is allowlisted + only listed sender IDs can trigger replies (even when others `@mention` bot).
+- Case C (`groupRequireMention: false`): mention is not required, but `allowFrom` (if set) is still enforced.
+- Avoid `groups.<id>.allowFrom: ["*"]`; this is effectively allow-all and is flagged as insecure in status warnings.
 
 Recommended explicit config (to avoid cross-machine ambiguity):
 
@@ -168,6 +177,8 @@ channels:
     groups:
       "<approved-group-id>":
         allow: true
+        # allowFrom is optional. If omitted, all members in this group can trigger replies when mention rules pass.
+        # allowFrom: ["<your-zalo-user-id>"] # uncomment to restrict triggering senders
     groupRequireMention: true
     groupMentionDetectionFailure: deny
 ```
@@ -182,6 +193,7 @@ channels:
       "<approved-group-id>":
         allow: true
         requireMention: true
+        allowFrom: ["<your-zalo-user-id>"] # optional inbound gate: only listed sender ids can trigger replies
         tools:
           deny: ["message", "openzalo"] # default for everyone in this group
         toolsBySender:

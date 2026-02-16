@@ -126,14 +126,21 @@ function warnMentionDetectionFailure({
 }
 
 function isSenderAllowed(senderId: string, allowFrom: string[]): boolean {
-  if (allowFrom.includes("*")) {
+  const normalizeSenderAllowEntry = (value: string): string =>
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/^(openzalo|zlu):/i, "")
+      .replace(/^user:/i, "")
+      .trim();
+  const normalizedAllowFrom = allowFrom
+    .map((entry) => normalizeSenderAllowEntry(entry))
+    .filter(Boolean);
+  if (normalizedAllowFrom.includes("*")) {
     return true;
   }
-  const normalizedSenderId = senderId.toLowerCase();
-  return allowFrom.some((entry) => {
-    const normalized = entry.toLowerCase().replace(/^(openzalo|zlu):/i, "");
-    return normalized === normalizedSenderId;
-  });
+  const normalizedSenderId = normalizeSenderAllowEntry(senderId);
+  return normalizedAllowFrom.some((entry) => entry === normalizedSenderId);
 }
 
 function normalizeGroupSlug(raw?: string | null): string {
@@ -147,16 +154,18 @@ function normalizeGroupSlug(raw?: string | null): string {
     .replace(/^-+|-+$/g, "");
 }
 
-function isGroupAllowed(params: {
+type OpenzaloGroupRule = {
+  allow?: boolean;
+  enabled?: boolean;
+  allowFrom?: Array<string | number>;
+};
+
+function resolveGroupRule(params: {
   groupId: string;
   groupName?: string | null;
-  groups: Record<string, { allow?: boolean; enabled?: boolean }>;
-}): boolean {
+  groups: Record<string, OpenzaloGroupRule>;
+}): OpenzaloGroupRule | undefined {
   const groups = params.groups ?? {};
-  const keys = Object.keys(groups);
-  if (keys.length === 0) {
-    return false;
-  }
   const candidates = [
     params.groupId,
     `group:${params.groupId}`,
@@ -165,16 +174,25 @@ function isGroupAllowed(params: {
   ].filter(Boolean);
   for (const candidate of candidates) {
     const entry = groups[candidate];
-    if (!entry) {
-      continue;
+    if (entry) {
+      return entry;
     }
-    return entry.allow !== false && entry.enabled !== false;
   }
-  const wildcard = groups["*"];
-  if (wildcard) {
-    return wildcard.allow !== false && wildcard.enabled !== false;
+  return groups["*"];
+}
+
+function isGroupAllowed(params: {
+  groupId: string;
+  groupName?: string | null;
+  groups: Record<string, OpenzaloGroupRule>;
+}): boolean {
+  const groups = params.groups ?? {};
+  const keys = Object.keys(groups);
+  if (keys.length === 0) {
+    return false;
   }
-  return false;
+  const entry = resolveGroupRule(params);
+  return Boolean(entry && entry.allow !== false && entry.enabled !== false);
 }
 
 function classifyOpenzcaStderr(text: string): "info" | "warn" | "error" {
@@ -1162,7 +1180,8 @@ async function processMessage(
   }
 
   const isGroup = inferIsGroupMessage(message);
-  const senderId = metadata?.fromId ?? metadata?.senderId ?? message.senderId ?? threadId;
+  const senderIdRaw = metadata?.fromId ?? metadata?.senderId ?? message.senderId;
+  const senderId = senderIdRaw ?? threadId;
   const senderName =
     metadata?.senderName ??
     metadata?.senderDisplayName ??
@@ -1175,6 +1194,13 @@ async function processMessage(
   const defaultGroupPolicy = config.channels?.defaults?.groupPolicy;
   const groupPolicy = account.config.groupPolicy ?? defaultGroupPolicy ?? "allowlist";
   const groups = account.config.groups ?? {};
+  const groupRule = isGroup ? resolveGroupRule({ groupId: chatId, groupName, groups }) : undefined;
+  const groupAllowFrom = isGroup
+    ? (groupRule?.allowFrom ?? [])
+        .map((entry) => String(entry).trim())
+        .filter(Boolean)
+    : [];
+  const normalizedGroupSenderId = senderIdRaw?.trim() ?? "";
   if (isGroup) {
     if (groupPolicy === "disabled") {
       logVerbose(core, runtime, `openzalo: drop group ${chatId} (groupPolicy=disabled)`);
@@ -1184,6 +1210,20 @@ async function processMessage(
       const allowed = isGroupAllowed({ groupId: chatId, groupName, groups });
       if (!allowed) {
         logVerbose(core, runtime, `openzalo: drop group ${chatId} (not allowlisted)`);
+        return;
+      }
+    }
+    if (groupAllowFrom.length > 0) {
+      if (!normalizedGroupSenderId) {
+        logVerbose(core, runtime, `openzalo: drop group ${chatId} (allowFrom configured, missing sender id)`);
+        return;
+      }
+      if (!isSenderAllowed(normalizedGroupSenderId, groupAllowFrom)) {
+        logVerbose(
+          core,
+          runtime,
+          `openzalo: drop group sender ${normalizedGroupSenderId} in ${chatId} (not in group allowFrom)`,
+        );
         return;
       }
     }
@@ -1218,13 +1258,24 @@ async function processMessage(
       ? await core.channel.pairing.readAllowFromStore("openzalo").catch(() => [])
       : [];
   const effectiveAllowFrom = [...configAllowFrom, ...storeAllowFrom];
+  const commandAllowFrom =
+    isGroup && groupAllowFrom.length > 0 ? groupAllowFrom : effectiveAllowFrom;
+  const commandSenderId = isGroup ? normalizedGroupSenderId : senderId;
+  const commandAuthSource = isGroup
+    ? groupAllowFrom.length > 0
+      ? "group.allowFrom"
+      : "account.allowFrom"
+    : "account.allowFrom+pairing";
   const useAccessGroups = config.commands?.useAccessGroups !== false;
-  const senderAllowedForCommands = isSenderAllowed(senderId, effectiveAllowFrom);
+  const senderAllowedForCommands =
+    commandAllowFrom.length > 0 && commandSenderId
+      ? isSenderAllowed(commandSenderId, commandAllowFrom)
+      : false;
   const commandAuthorized = shouldComputeAuth
     ? core.channel.commands.resolveCommandAuthorizedFromAuthorizers({
         useAccessGroups,
         authorizers: [
-          { configured: effectiveAllowFrom.length > 0, allowed: senderAllowedForCommands },
+          { configured: commandAllowFrom.length > 0, allowed: senderAllowedForCommands },
         ],
       })
     : undefined;
@@ -1407,7 +1458,8 @@ async function processMessage(
     const deniedMessage =
       `openzalo: drop control command from unauthorized sender ${senderId} ` +
       `command="${commandPreview}" authorized=${String(commandAuthorized)} ` +
-      `effectiveAuthorized=${String(effectiveCommandAuthorized)} senderAllowed=${String(senderAllowedForCommands)}`;
+      `effectiveAuthorized=${String(effectiveCommandAuthorized)} senderAllowed=${String(senderAllowedForCommands)} ` +
+      `authSource=${commandAuthSource}`;
     if (shouldTraceSessionReset) {
       runtime.log?.(`[openzalo] ${deniedMessage}`);
     } else {
@@ -1817,8 +1869,16 @@ export async function monitorOpenzaloProvider(
     const allowFromEntries = (account.config.allowFrom ?? [])
       .map((entry) => normalizeOpenzaloEntry(String(entry)))
       .filter((entry) => entry && entry !== "*");
+    const groupsConfigForAllowFrom = account.config.groups ?? {};
+    const shouldResolveGroupAllowFromUsers = Object.values(groupsConfigForAllowFrom).some(
+      (groupConfig) =>
+        (groupConfig?.allowFrom ?? []).some((entry) => {
+          const cleaned = normalizeOpenzaloEntry(String(entry));
+          return cleaned !== "" && cleaned !== "*" && !/^\d+$/.test(cleaned);
+        }),
+    );
 
-    if (allowFromEntries.length > 0) {
+    if (allowFromEntries.length > 0 || shouldResolveGroupAllowFromUsers) {
       const result = await runOpenzca(["friend", "list", "-j"], { profile, timeout: 15000 });
       if (result.ok) {
         const friends = parseJsonOutput<ZcaFriend[]>(result.stdout) ?? [];
@@ -1841,15 +1901,59 @@ export async function monitorOpenzaloProvider(
             unresolved.push(entry);
           }
         }
-        const allowFrom = mergeAllowlist({ existing: account.config.allowFrom, additions });
+        const allowFrom =
+          additions.length > 0
+            ? mergeAllowlist({ existing: account.config.allowFrom, additions })
+            : account.config.allowFrom;
+        const nextGroups = { ...groupsConfigForAllowFrom };
+        const groupMapping: string[] = [];
+        const groupUnresolved: string[] = [];
+        for (const [groupKey, groupConfig] of Object.entries(groupsConfigForAllowFrom)) {
+          const rawAllowFrom = groupConfig?.allowFrom ?? [];
+          if (rawAllowFrom.length === 0) {
+            continue;
+          }
+          const groupAdditions: string[] = [];
+          for (const rawEntry of rawAllowFrom) {
+            const cleaned = normalizeOpenzaloEntry(String(rawEntry));
+            if (!cleaned || cleaned === "*") {
+              continue;
+            }
+            if (/^\d+$/.test(cleaned)) {
+              groupAdditions.push(cleaned);
+              continue;
+            }
+            const matches = byName.get(cleaned.toLowerCase()) ?? [];
+            const match = matches[0];
+            const id = match?.userId ? String(match.userId) : undefined;
+            if (id) {
+              groupAdditions.push(id);
+              groupMapping.push(`${groupKey}:${cleaned}→${id}`);
+            } else {
+              groupUnresolved.push(`${groupKey}:${cleaned}`);
+            }
+          }
+          if (groupAdditions.length === 0) {
+            continue;
+          }
+          nextGroups[groupKey] = {
+            ...groupConfig,
+            allowFrom: mergeAllowlist({
+              existing: groupConfig.allowFrom,
+              additions: groupAdditions,
+            }),
+          };
+        }
         account = {
           ...account,
           config: {
             ...account.config,
             allowFrom,
+            groups: nextGroups,
           },
         };
         summarizeMapping("openzalo users", mapping, unresolved, runtime);
+        summarizeMapping("openzalo group allowFrom users", groupMapping, groupUnresolved, runtime);
       } else {
         runtime.log?.(`openzalo user resolve failed; using config entries. ${result.stderr}`);
       }

@@ -8,6 +8,7 @@ const toolPolicyBySenderSchema = z.object({}).catchall(ToolPolicySchema).optiona
 const groupConfigSchema = z.object({
   allow: z.boolean().optional(),
   enabled: z.boolean().optional(),
+  allowFrom: z.array(allowFromEntry).optional(),
   tools: ToolPolicySchema,
   toolsBySender: toolPolicyBySenderSchema,
   requireMention: z.boolean().optional(),

@@ -61,6 +61,67 @@ async function noteOpenzaloHelp(prompter: WizardPrompter): Promise<void> {
   );
 }
 
+function parseAllowFromEntries(raw: string): string[] {
+  return raw
+    .split(/[\n,;]+/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+async function resolveOpenzaloAllowFromEntries(params: {
+  profile: string;
+  inputs: string[];
+  prompter: WizardPrompter;
+  noteTitle: string;
+}): Promise<{ resolved: string[]; unresolved: string[] }> {
+  const { profile, inputs, prompter, noteTitle } = params;
+  const openzcaInstalled = await checkOpenzcaInstalled();
+  const resolved: string[] = [];
+  const unresolved: string[] = [];
+
+  for (const input of inputs) {
+    const trimmed = input.trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (/^\d+$/.test(trimmed)) {
+      resolved.push(trimmed);
+      continue;
+    }
+    if (!openzcaInstalled) {
+      unresolved.push(trimmed);
+      continue;
+    }
+    const result = await runOpenzca(["friend", "find", trimmed], {
+      profile,
+      timeout: 15000,
+    });
+    if (!result.ok) {
+      unresolved.push(trimmed);
+      continue;
+    }
+    const parsed = parseJsonOutput<ZcaFriend[]>(result.stdout);
+    const rows = Array.isArray(parsed) ? parsed : [];
+    const match = rows[0];
+    if (!match?.userId) {
+      unresolved.push(trimmed);
+      continue;
+    }
+    if (rows.length > 1) {
+      await prompter.note(
+        `Multiple matches for "${trimmed}", using ${match.displayName ?? match.userId}.`,
+        noteTitle,
+      );
+    }
+    resolved.push(String(match.userId));
+  }
+
+  return {
+    resolved: [...new Set(resolved)],
+    unresolved: [...new Set(unresolved)],
+  };
+}
+
 async function promptOpenzaloAllowFrom(params: {
   cfg: OpenClawConfig;
   prompter: WizardPrompter;
@@ -69,45 +130,6 @@ async function promptOpenzaloAllowFrom(params: {
   const { cfg, prompter, accountId } = params;
   const resolved = resolveOpenzaloAccountSync({ cfg, accountId });
   const existingAllowFrom = resolved.config.allowFrom ?? [];
-  const parseInput = (raw: string) =>
-    raw
-      .split(/[\n,;]+/g)
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-
-  const resolveUserId = async (input: string): Promise<string | null> => {
-    const trimmed = input.trim();
-    if (!trimmed) {
-      return null;
-    }
-    if (/^\d+$/.test(trimmed)) {
-      return trimmed;
-    }
-    const ok = await checkOpenzcaInstalled();
-    if (!ok) {
-      return null;
-    }
-    const result = await runOpenzca(["friend", "find", trimmed], {
-      profile: resolved.profile,
-      timeout: 15000,
-    });
-    if (!result.ok) {
-      return null;
-    }
-    const parsed = parseJsonOutput<ZcaFriend[]>(result.stdout);
-    const rows = Array.isArray(parsed) ? parsed : [];
-    const match = rows[0];
-    if (!match?.userId) {
-      return null;
-    }
-    if (rows.length > 1) {
-      await prompter.note(
-        `Multiple matches for "${trimmed}", using ${match.displayName ?? match.userId}.`,
-        "Zalo Personal allowlist",
-      );
-    }
-    return String(match.userId);
-  };
 
   while (true) {
     const entry = await prompter.text({
@@ -116,9 +138,13 @@ async function promptOpenzaloAllowFrom(params: {
       initialValue: existingAllowFrom[0] ? String(existingAllowFrom[0]) : undefined,
       validate: (value) => (String(value ?? "").trim() ? undefined : "Required"),
     });
-    const parts = parseInput(String(entry));
-    const results = await Promise.all(parts.map((part) => resolveUserId(part)));
-    const unresolved = parts.filter((_, idx) => !results[idx]);
+    const parts = parseAllowFromEntries(String(entry));
+    const { resolved: resolvedIds, unresolved } = await resolveOpenzaloAllowFromEntries({
+      profile: resolved.profile,
+      inputs: parts,
+      prompter,
+      noteTitle: "Zalo Personal allowlist",
+    });
     if (unresolved.length > 0) {
       await prompter.note(
         `Could not resolve: ${unresolved.join(", ")}. Use numeric user ids or ensure openzca is available.`,
@@ -128,7 +154,7 @@ async function promptOpenzaloAllowFrom(params: {
     }
     const merged = [
       ...existingAllowFrom.map((item) => String(item).trim()).filter(Boolean),
-      ...(results.filter(Boolean) as string[]),
+      ...resolvedIds,
     ];
     const unique = [...new Set(merged)];
     if (accountId === DEFAULT_ACCOUNT_ID) {
@@ -243,6 +269,41 @@ function setOpenzaloGroupAllowlist(
       },
     },
   } as OpenClawConfig;
+}
+
+function setOpenzaloGroupsAllowFrom(
+  cfg: OpenClawConfig,
+  accountId: string,
+  allowFromEntries: string[],
+): OpenClawConfig {
+  const account = resolveOpenzaloAccountSync({ cfg, accountId });
+  const groups = account.config.groups ?? {};
+  if (Object.keys(groups).length === 0) {
+    return cfg;
+  }
+
+  const additions = allowFromEntries.map((entry) => entry.trim()).filter(Boolean);
+  if (additions.length === 0) {
+    return cfg;
+  }
+
+  const nextGroups = Object.fromEntries(
+    Object.entries(groups).map(([groupKey, groupConfig]) => {
+      const existingAllowFrom = (groupConfig.allowFrom ?? [])
+        .map((entry) => String(entry).trim())
+        .filter(Boolean);
+      const allowFrom = [...new Set([...existingAllowFrom, ...additions])];
+      return [
+        groupKey,
+        {
+          ...groupConfig,
+          allowFrom,
+        },
+      ];
+    }),
+  );
+
+  return patchOpenzaloAccountConfig(cfg, accountId, { groups: nextGroups });
 }
 
 function patchOpenzaloAccountConfig(
@@ -540,6 +601,58 @@ export const openzaloOnboardingAdapter: ChannelOnboardingAdapter = {
         }
         next = setOpenzaloGroupPolicy(next, accountId, "allowlist");
         next = setOpenzaloGroupAllowlist(next, accountId, keys);
+      }
+    }
+
+    const groupAccessAccount = resolveOpenzaloAccountSync({ cfg: next, accountId });
+    const effectiveGroupPolicyAfterAccess = groupAccessAccount.config.groupPolicy ?? "allowlist";
+    const configuredGroups = groupAccessAccount.config.groups ?? {};
+    const configuredGroupKeys = Object.keys(configuredGroups);
+    const existingGroupAllowFrom = [
+      ...new Set(
+        Object.values(configuredGroups).flatMap((groupConfig) =>
+          (groupConfig.allowFrom ?? []).map((entry) => String(entry).trim()).filter(Boolean),
+        ),
+      ),
+    ];
+    if (effectiveGroupPolicyAfterAccess !== "disabled" && configuredGroupKeys.length > 0) {
+      const restrictGroupSenders = await prompter.confirm({
+        message: "Restrict sender IDs that can trigger replies in configured groups?",
+        initialValue: existingGroupAllowFrom.length > 0,
+      });
+      if (restrictGroupSenders) {
+        while (true) {
+          const rawEntries = await prompter.text({
+            message: "Group allowFrom (username or user id)",
+            placeholder: "Alice, 123456789",
+            initialValue:
+              existingGroupAllowFrom.length > 0 ? existingGroupAllowFrom.join(", ") : undefined,
+            validate: (value) => (String(value ?? "").trim() ? undefined : "Required"),
+          });
+          const parts = parseAllowFromEntries(String(rawEntries));
+          const { resolved: resolvedIds, unresolved } = await resolveOpenzaloAllowFromEntries({
+            profile: groupAccessAccount.profile,
+            inputs: parts,
+            prompter,
+            noteTitle: "Zalo groups sender allowlist",
+          });
+          if (unresolved.length > 0) {
+            await prompter.note(
+              `Could not resolve: ${unresolved.join(", ")}. Use numeric user ids or ensure openzca is available.`,
+              "Zalo groups sender allowlist",
+            );
+            continue;
+          }
+          if (resolvedIds.length === 0) {
+            await prompter.note(
+              "No valid sender IDs found. Enter at least one username or numeric user id.",
+              "Zalo groups sender allowlist",
+            );
+            continue;
+          }
+          next = setOpenzaloGroupsAllowFrom(next, accountId, resolvedIds);
+          break;
+        }
       }
     }
 

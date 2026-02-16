@@ -764,6 +764,11 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
       const groups = account.config.groups ?? {};
       const groupCount = Object.keys(groups).length;
       const requireMention = account.config.groupRequireMention ?? true;
+      const wildcardGroupSenderAllowlists = Object.entries(groups)
+        .filter(([, groupConfig]) =>
+          (groupConfig?.allowFrom ?? []).some((entry) => String(entry).trim() === "*"),
+        )
+        .map(([groupKey]) => groupKey);
 
       if (groupPolicy === "open") {
         if (!requireMention) {
@@ -780,6 +785,11 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
       if (groupPolicy === "allowlist" && groupCount === 0) {
         warnings.push(
           `- Openzalo groups: groupPolicy="allowlist" but channels.openzalo.groups is empty, so all group messages are blocked until groups are configured.`,
+        );
+      }
+      if (wildcardGroupSenderAllowlists.length > 0) {
+        warnings.push(
+          `- Openzalo groups: groups.<id>.allowFrom contains "*" (${wildcardGroupSenderAllowlists.join(", ")}), which allows any member in those groups to run /… commands and control directives. Remove "*" and use explicit sender IDs.`,
         );
       }
 
@@ -1548,6 +1558,13 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
       const zcaInstalled = await checkOpenzcaInstalled();
       const configured = zcaInstalled ? await checkZcaAuthenticated(account.profile) : false;
       const configError = zcaInstalled ? "not authenticated" : "openzca CLI not found in PATH";
+      const groupRules = Object.values(account.config.groups ?? {});
+      const groupAllowFromConfiguredCount = groupRules.filter(
+        (groupRule) => (groupRule?.allowFrom ?? []).length > 0,
+      ).length;
+      const groupAllowFromWildcardCount = groupRules.filter((groupRule) =>
+        (groupRule?.allowFrom ?? []).some((entry) => String(entry).trim() === "*"),
+      ).length;
       return {
         accountId: account.accountId,
         name: account.name,
@@ -1566,6 +1583,8 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount> = {
         sendFailureNotice: account.config.sendFailureNotice !== false,
         groupCount: Object.keys(account.config.groups ?? {}).length,
         hasWildcardGroupRule: Boolean(account.config.groups?.["*"]),
+        groupAllowFromConfiguredCount,
+        groupAllowFromWildcardCount,
         dispatchFailures: readSnapshotMetric(runtime, "dispatchFailures"),
         typingFailures: readSnapshotMetric(runtime, "typingFailures"),
         textChunkFailures: readSnapshotMetric(runtime, "textChunkFailures"),

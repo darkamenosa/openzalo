@@ -11,6 +11,7 @@ type OpenzaloAccountStatus = {
   sendFailureNotice?: unknown;
   groupCount?: unknown;
   hasWildcardGroupRule?: unknown;
+  groupAllowFromWildcardCount?: unknown;
   lastError?: unknown;
 };
 
@@ -42,6 +43,7 @@ function readOpenzaloAccountStatus(value: ChannelAccountSnapshot): OpenzaloAccou
     sendFailureNotice: raw.sendFailureNotice,
     groupCount: raw.groupCount,
     hasWildcardGroupRule: raw.hasWildcardGroupRule,
+    groupAllowFromWildcardCount: raw.groupAllowFromWildcardCount,
     lastError: raw.lastError,
   };
 }
@@ -117,6 +119,7 @@ export function collectOpenzaloStatusIssues(
     const mentionDetectionFailureMode = asString(account.groupMentionDetectionFailure) ?? "deny";
     const groupCount = asNumber(account.groupCount) ?? 0;
     const hasWildcardGroupRule = asBoolean(account.hasWildcardGroupRule) === true;
+    const groupAllowFromWildcardCount = asNumber(account.groupAllowFromWildcardCount) ?? 0;
 
     if (groupPolicy === "open" && !groupRequireMention) {
       issues.push({
@@ -148,6 +151,17 @@ export function collectOpenzaloStatusIssues(
         message:
           'Zalo Personal groupPolicy is "allowlist" but no groups are configured, so all group messages are blocked.',
         fix: "Add entries under channels.openzalo.groups.",
+      });
+    }
+    if (groupAllowFromWildcardCount > 0) {
+      issues.push({
+        channel: "openzalo",
+        accountId,
+        kind: "config",
+        message:
+          `Found ${groupAllowFromWildcardCount} group rule(s) where allowFrom contains "*"; ` +
+          "this allows any member in those groups to run /… commands and control directives.",
+        fix: 'Remove "*" from channels.openzalo.groups.<id>.allowFrom and use explicit sender IDs.',
       });
     }
 

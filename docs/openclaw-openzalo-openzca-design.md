@@ -94,6 +94,9 @@ Rationale:
   - For direct factual requests (for example "bây giờ là mấy giờ"), return the answer immediately.
 - Security hardening for group actions:
   - Use per-group `tools.deny` plus `toolsBySender` override so sensitive actions (`message`, `openzalo`) are blocked for everyone except approved sender IDs.
+  - Optional inbound gate: use per-group `allowFrom` to restrict who can trigger bot replies in that group (default remains allow-all when unset).
+  - Group control-command auth (`/...`) should follow per-group `allowFrom` when configured, instead of only account-level DM allowlists.
+  - Treat `groups.<id>.allowFrom: ["*"]` as insecure; warn in security checks and prefer explicit sender IDs.
 
 ## 7) Note on current CLI workspace state
 

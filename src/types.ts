@@ -150,6 +150,7 @@ export type ListenOptions = CommonOptions & {
 export type OpenzaloGroupConfig = {
   allow?: boolean;
   enabled?: boolean;
+  allowFrom?: Array<string | number>;
   tools?: GroupToolPolicyConfig;
   toolsBySender?: GroupToolPolicyBySenderConfig;
   requireMention?: boolean;
