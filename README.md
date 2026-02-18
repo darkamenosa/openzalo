@@ -1,404 +1,256 @@
 # @openclaw/openzalo
 
-OpenClaw extension for Zalo Personal Account messaging via [openzca](https://openzca.com/).
+OpenClaw extension for Zalo Personal messaging via [openzca](https://openzca.com/).
 
-> **Warning:** Using Zalo automation may result in account suspension or ban. Use at your own risk. This is an unofficial integration.
+Warning: this is an unofficial automation integration. Using automation with Zalo may risk account restrictions.
 
-## Features
+## What the extension provides
 
-- **Always-On Gateway Listener**: Uses `openzca listen -r -k` with auto-restart on listener failures.
-- **Reply Messaging**: End-to-end inbound -> agent -> outbound reply flow for direct and group chats.
-- **Per-Chat Reply Ordering**: Messages are processed sequentially per conversation to avoid collapsing queued replies.
-- **Typing Indicator**: Sends typing events while OpenClaw is processing/replying.
-- **Media Sending**: Supports image/video/voice style media send via `openzca msg <type> -u <url-or-path>`.
-- **Group Reply Modes**: Supports open groups and mention-required groups (`groupRequireMention`), with group allowlist policy support.
-- **Recent Group Context**: In mention-required groups, the bot loads recent group messages on-demand before replying to a tagged turn.
-- **Human Pass Mode**: `human pass on/off` to pause/resume bot replies per chat while still ingesting messages for context.
-- **Failure Notice Fallback**: Optional user-facing fallback message when reply dispatch fails.
-- **Interactive Message Actions**: Supports OpenClaw actions (`send`, `read`, `react`, `edit`, `unsend`, `delete`, `pin`, `unpin`, `list-pins`, `member-info`) using `openzca` commands.
-- **Live Directory Queries**: `listPeersLive`/`listGroupsLive` adapters return fresh contact/group data on each query.
-- **Config-Driven Outbound Limits**: Supports `textChunkLimit`, `chunkMode`, and `mediaMaxMb` with account-level overrides.
-- **Multi-Account Support**: Manage multiple Zalo personal accounts.
-- **Agent Tool**: AI agent integration for messaging and directory/status actions.
+This package registers both:
 
-## Feature Matrix
+- Channel plugin `openzalo` (onboarding, auth, gateway listener, directory, message actions, status)
+- Agent tool `openzalo` (direct tool actions for send/query/status)
 
-| Capability | `zalouser` baseline | `openzalo` |
-|---|---|---|
-| Always-on listener | Yes | Yes |
-| Reply text message | Yes | Yes |
-| Typing indicator during thinking | Usually missing | Yes |
-| Error notice on reply failure | Often silent | Yes (`sendFailureNotice`) |
-| Send files/media (image/video/voice/link) | Yes | Yes |
-| Group reply all messages | Yes | Yes (configurable) |
-| Group mention-required mode | Inconsistent by setup | Yes (`groupRequireMention`) |
-| Human pass (pause bot replies) | No | Yes |
-| Keep ingesting context while paused/untagged | Partial | Yes |
-| Interactive actions (`send/read/react/edit/unsend/delete/pin/unpin/list-pins/member-info`) | Limited | Yes |
-| Live directory refresh (`listPeersLive` / `listGroupsLive`) | Limited | Yes |
-| Config-driven limits (`textChunkLimit`, `chunkMode`, `mediaMaxMb`) | Partial | Yes |
-| Backend compatibility with `openzca` | Yes | Yes |
+## Implemented behavior (from code)
+
+- Listener process: runs `openzca listen -r -k`, parses JSON lines, and auto-restarts in 5 seconds on listener failure.
+- Inbound dedupe: suppresses duplicate inbound events within a TTL window.
+- Reply pipeline: inbound -> OpenClaw reply dispatcher -> outbound text/media delivery.
+- Typing signals: sends `msg typing` while generating replies (throttled per chat).
+- Text chunking: markdown-aware chunking with configurable `textChunkLimit`/`chunkMode`.
+- Media send:
+  - Image/video/audio sent with matching openzca subcommands.
+  - Generic files use `msg upload`.
+  - Optional local file-size precheck using `mediaMaxMb`.
+- Group context preload: recent group messages are auto-injected into context when enabled.
+- Adaptive history expansion: context window expands for quote/context-dependent turns.
+- Mention gating in groups: supports required mention mode with failure strategy.
+- Human pass mode: `human pass on|off` (also accepts `humanpass` and `bot on|off`).
+- Failure notice fallback: optional user-facing message when dispatch fails and no reply was sent.
+- Message-action support: `send`, `read`, `react`, `edit`, `delete`, `unsend`, `pin`, `unpin`, `list-pins`, `member-info`.
+- Unsend recovery flow for channel actions: resolves IDs from reply context, in-memory undo cache, or recent messages.
+- Dedicated `openzalo` tool actions: `send`, `unsend`, `image`, `link`, `friends`, `groups`, `group-members`, `me`, `status`.
+- Multi-account support with per-account override config.
 
 ## Prerequisites
 
-Install `openzca` and ensure it's in your PATH:
-
-**macOS / Linux:**
+Install `openzca` and make sure it is in `PATH`:
 
 ```bash
 npm i -g openzca
-
-# Or install via official installer script
-curl -fsSL https://openzca.com/install.sh | bash
+# or installer script from https://openzca.com/
 ```
 
-**Windows (PowerShell):**
+Optional environment variables used by this extension:
 
-```powershell
-# Install via official installer script
-irm https://openzca.com/install.ps1 | iex
-```
+- `OPENZCA_BINARY`: custom openzca binary name/path (default: `openzca`)
+- `OPENZCA_PROFILE` / `ZCA_PROFILE`: default profile for openzca commands
 
-### Run without install
-
-```bash
-npx openzca --help
-```
-
-See [openzca docs](https://openzca.com/) for installation and usage details.
-
-## Quick Start
-
-### Option 1: Onboarding Wizard (Recommended)
+## Quick start
 
 ```bash
 openclaw onboard
-# Select "Zalo Personal" from channel list
-# Follow QR code login flow
+# choose "Zalo Personal"
 ```
 
-### Option 2: Login (QR, on the Gateway machine)
+or login directly:
 
 ```bash
 openclaw channels login --channel openzalo
-# Scan QR code with Zalo app
 ```
 
-### Send a Message
+## Target formats
 
-```bash
-openclaw message send --channel openzalo --target <threadId> --message "Hello from OpenClaw!"
-```
+Preferred thread targets:
+
+- `user:<id>`
+- `group:<id>`
+
+Also accepted:
+
+- `u-<id>` / `g-<id>`
+- `openzalo:user:<id>` / `openzalo:group:<id>`
+- bare numeric IDs (ambiguous without `isGroup` in some action paths)
 
 ## Configuration
 
-After onboarding, your config will include:
+Example:
 
 ```yaml
 channels:
   openzalo:
     enabled: true
-    dmPolicy: pairing # pairing | allowlist | open | disabled
-    groupPolicy: allowlist # allowlist | open | disabled
-    groupRequireMention: true # require @mention in group chats
-    groupMentionDetectionFailure: deny # allow | deny | allow-with-warning
-    historyLimit: 6 # optional override (highest priority; set 0 to disable preload)
-    sendFailureNotice: true # send fallback message on dispatch failure
-    sendFailureMessage: Some problem occurred, could not send a reply.
-    textChunkLimit: 2000 # max supported by openzca/openzalo
-    chunkMode: length # length | newline
-    mediaMaxMb: 50 # outbound media limit
-    actions:
-      messages: true # read/delete/unsend
-      reactions: true # react
-```
 
-For multi-account:
-
-```yaml
-channels:
-  openzalo:
-    enabled: true
+    # account/profile
+    profile: default
     defaultAccount: default
-    accounts:
-      default:
+
+    # direct message access
+    dmPolicy: pairing # pairing | allowlist | open | disabled
+    allowFrom: ["123456789"]
+
+    # group access
+    groupPolicy: allowlist # allowlist | open | disabled
+    groupRequireMention: true
+    groupMentionDetectionFailure: deny # allow | deny | allow-with-warning
+    groups:
+      "5316386947725214403":
+        allow: true
         enabled: true
-        profile: default
+        requireMention: true # per-group override
+        allowFrom: ["123456789"] # optional sender gate
+        tools:
+          deny: ["message", "openzalo"]
+        toolsBySender:
+          "123456789":
+            alsoAllow: ["message", "openzalo"]
+
+    # reply behavior
+    historyLimit: 6
+    sendFailureNotice: true
+    sendFailureMessage: Some problem occurred, could not send a reply.
+
+    # outbound limits
+    textChunkLimit: 2000
+    chunkMode: length # length | newline
+    mediaMaxMb: 50
+
+    # action gating
+    actions:
+      messages: true
+      reactions: true
+
+    # optional multi-account overrides
+    accounts:
       work:
         enabled: true
         profile: work
+        dmPolicy: allowlist
+        allowFrom: ["987654321"]
 ```
 
-Global fallback when `channels.openzalo.historyLimit` is not set:
+`historyLimit` fallback order:
 
-```yaml
-messages:
-  groupChat:
-    historyLimit: 8
-```
+1. `channels.openzalo[.accounts.<id>].historyLimit`
+2. `messages.groupChat.historyLimit`
+3. built-in default `6`
 
-### Default Behavior (When `channels.openzalo` Is Missing)
+Set `historyLimit: 0` to disable group recent-history preload.
 
-If plugin `openzalo` is enabled but `channels.openzalo` is not set in config, runtime defaults are:
+## Access-control semantics
 
-- `dmPolicy: pairing`
-- `groupPolicy: allowlist`
-- `groupRequireMention: true`
-- `groupMentionDetectionFailure: deny`
-- `sendFailureNotice: true`
-- `historyLimit: channels.openzalo.historyLimit -> channels.messages.groupChat.historyLimit -> 6`
+DM policy:
 
-Behavior summary:
+- `pairing` (default): unknown senders receive pairing flow; only approved senders can trigger replies.
+- `allowlist`: only `allowFrom` senders can trigger replies.
+- `open`: any sender can trigger replies.
+- `disabled`: no DM replies.
 
-- Direct chat (DM): unknown users do not get normal bot replies; they receive pairing flow first.
-- Group chat: bot replies only in allowlisted groups, and only when explicitly mentioned.
-- Optional sender restriction: set `channels.openzalo.groups.<group-id>.allowFrom` to limit replies to specific group members. If omitted, all members in that allowlisted group can trigger replies (subject to mention rules).
-- Group command auth: when `groups.<group-id>.allowFrom` is set, `/...` control-command authorization for that group uses this sender allowlist; otherwise it falls back to account-level `channels.openzalo.allowFrom`.
-- Group chat context: baseline preload is 6 messages (or configured `historyLimit`), and the window auto-expands for context-sensitive turns (for example short referential replies or quoted replies).
-- If more context is needed mid-reply, the agent can call action `read` with a higher `limit` for the same group conversation.
-- Mention detection: uses structured mention IDs from inbound payload (`mentionIds` / `mentions[].uid`) matched against bot user id.
-- If mention detection is unavailable while mention is required: message is denied by default.
-- Authorized control commands can bypass mention gating.
+Group policy:
 
-Triggering examples (group):
+- `allowlist` (default): only configured groups are processed.
+- `open`: any group can be processed.
+- `disabled`: group replies disabled.
 
-- Case A (`allowFrom` unset): group is allowlisted + member `@mentions` bot -> reply is allowed for any member.
-- Case B (`allowFrom` set): group is allowlisted + only listed sender IDs can trigger replies (even when others `@mention` bot).
-- Case C (`groupRequireMention: false`): mention is not required, but `allowFrom` (if set) is still enforced.
-- Avoid `groups.<id>.allowFrom: ["*"]`; this is effectively allow-all and is flagged as insecure in status warnings.
+Group sender restriction:
 
-Recommended explicit config (to avoid cross-machine ambiguity):
+- `groups.<group>.allowFrom` restricts who can trigger replies in that group.
+- Using `"*"` in group `allowFrom` is treated as insecure and is surfaced in status warnings.
 
-```yaml
-channels:
-  openzalo:
-    dmPolicy: pairing
-    groupPolicy: allowlist
-    groups:
-      "<approved-group-id>":
-        allow: true
-        # allowFrom is optional. If omitted, all members in this group can trigger replies when mention rules pass.
-        # allowFrom: ["<your-zalo-user-id>"] # uncomment to restrict triggering senders
-    groupRequireMention: true
-    groupMentionDetectionFailure: deny
-```
+## Human pass mode
 
-Restrict sensitive tool actions in a group to only your sender identity:
+Per session/chat control commands:
 
-```yaml
-channels:
-  openzalo:
-    groupPolicy: allowlist
-    groups:
-      "<approved-group-id>":
-        allow: true
-        requireMention: true
-        allowFrom: ["<your-zalo-user-id>"] # optional inbound gate: only listed sender ids can trigger replies
-        tools:
-          deny: ["message", "openzalo"] # default for everyone in this group
-        toolsBySender:
-          "<your-zalo-user-id>":
-            alsoAllow: ["message", "openzalo"] # only you can run send/unsend-style actions
-```
+- `human pass on`
+- `human pass off`
 
-## Commands
+Aliases accepted by parser:
 
-### Authentication
+- `/human pass on|off`
+- `humanpass on|off`
+- `bot on|off`
 
-```bash
-openclaw channels login --channel openzalo              # Login via QR
-openclaw channels login --channel openzalo --account work
-openclaw channels status --probe
-openclaw channels logout --channel openzalo
-```
+When enabled, inbound messages are still ingested for context, but bot replies are skipped.
 
-### Directory (IDs, contacts, groups)
+## Message actions (channel)
 
-```bash
-openclaw directory self --channel openzalo
-openclaw directory peers list --channel openzalo --query "name"
-openclaw directory groups list --channel openzalo --query "work"
-openclaw directory groups members --channel openzalo --group-id <id>
-```
+Available action set depends on `actions.messages` / `actions.reactions`:
 
-### Account Management
+- Always: `send`
+- When `actions.messages` is enabled (default): `read`, `edit`, `delete`, `unsend`, `pin`, `unpin`, `list-pins`, `member-info`
+- When `actions.reactions` is enabled (default): `react`
 
-```bash
-openzca account list      # List all profiles
-openzca account current   # Show active profile
-openzca account switch <profile>
-openzca account remove <profile>
-openzca account label <profile> "Work Account"
-```
+`unsend` action in channel path supports fallback ID recovery from:
 
-### Messaging
+1. explicit params / reply IDs
+2. cached undo refs from recent sends
+3. recent message scan in target thread
 
-```bash
-# Text
-openclaw message send --channel openzalo --target <threadId> --message "message"
+## Dedicated `openzalo` agent tool
 
-# Media (URL or file path supported by openzca -u)
-openclaw message send --channel openzalo --target <threadId> --message "caption" --media-url "https://example.com/img.jpg"
+Tool name: `openzalo`
 
-# Video/voice are auto-detected by extension in openzalo send helpers
-# (e.g. .mp4 -> video, .mp3/.wav/.ogg/.m4a -> voice)
-# Generic file uploads (.pdf/.xlsx/.zip/...) are sent as attachment-only (no extra caption text message).
-```
+Supported actions:
 
-### Human Pass Mode
+- `send`: text or media/file (`media`/`path`/`filePath`)
+- `unsend`: requires `msgId` + `cliMsgId`
+- `image`, `link`
+- `friends`, `groups`, `group-members`
+- `me`, `status`
 
-Human pass mode lets a human take over the conversation temporarily.
-
-- `human pass on`: bot stops replying in that chat/session.
-- `human pass off`: bot resumes replying in that chat/session.
-- While enabled, inbound messages are still ingested into session context.
-- In groups with mention-required mode, untagged messages are still recorded for context, but bot replies remain mention-gated.
-
-### Listener
-
-The listener runs inside the Gateway when the channel is enabled. For debugging,
-use `openclaw channels logs --channel openzalo` or run `openzca listen` directly.
-
-### Logging and Debugging
-
-Use this when `/new` or mention parsing does not behave as expected.
-
-1. Ensure Gateway file log level is `debug` (this also enables `logVerbose()`-gated lines):
-
-```json
-{
-  "logging": {
-    "level": "debug",
-    "consoleLevel": "debug"
-  }
-}
-```
-
-2. Restart Gateway after config changes.
-
-3. Inspect channel logs:
-
-```bash
-openclaw channels logs --channel openzalo --lines 500
-```
-
-4. Or tail the raw JSONL file directly (best for deep debugging):
-
-```bash
-LOG_FILE="$(ls -t /tmp/openclaw/openclaw-*.log | head -1)"
-tail -f "$LOG_FILE"
-```
-
-Raw file lines are structured JSON where:
-
-- field `"0"` = structured subsystem metadata (`{"subsystem":"..."}`)
-- field `"1"` = human-readable log message
-- field `"_meta.logLevelName"` = `DEBUG`/`INFO`/`WARN`/`ERROR`
-
-Filter only openzalo command parse traces:
-
-```bash
-tail -f "$LOG_FILE" \
-  | jq -cr 'select(((."0" // "") | tostring | test("openzalo")) and ((."1" // "") | tostring | test("control parse")))'
-```
-
-For group messages containing `/new` or `/reset`, Openzalo now always emits an
-info log like:
-
-`openzalo: control parse raw="..." parsed="..." source=... builtin=... isControl=... canRun=...`
-
-These parse traces are always-on (not gated by `logVerbose()`), so they appear
-even when verbose logging is off.
-
-### Data Access
-
-```bash
-# Friends
-openzca friend list
-openzca friend list -j    # JSON output
-openzca friend find "name"
-openzca friend online
-
-# Groups
-openzca group list
-openzca group info <groupId>
-openzca group members <groupId>
-
-# Profile
-openzca me info
-openzca me id
-```
-
-## Multi-Account Support
-
-Use `--profile` or `-p` to work with multiple accounts:
-
-```bash
-openclaw channels login --channel openzalo --account work
-openclaw message send --channel openzalo --account work --target <id> --message "Hello"
-openzca --profile work listen
-```
-
-Profile resolution order: CLI `--profile` flag > default profile.
-
-## Agent Tool
-
-The extension registers a `openzalo` tool for AI agents:
+Example:
 
 ```json
 {
   "action": "send",
-  "threadId": "user:123456",
-  "message": "Hello from AI!",
-  "isGroup": false,
-  "profile": "default"
-}
-```
-
-`action=send` also supports media/file upload via `media`/`path`/`filePath`:
-
-```json
-{
-  "action": "send",
-  "threadId": "user:123456",
-  "media": "~/Downloads/report.pdf",
-  "message": "Here is the PDF.",
-  "profile": "default"
-}
-```
-
-For group chats, prefer explicit group targets to avoid ambiguity:
-
-```json
-{
-  "action": "image",
   "threadId": "group:5316386947725214403",
-  "url": "~/.openclaw/workspace/avatars/em-thu-ky-avatar.jpg",
-  "message": "Avatar em Thu ne",
-  "profile": "default"
-}
-```
-
-If you must use bare numeric IDs, set `isGroup` explicitly:
-
-```json
-{
-  "action": "send",
-  "threadId": "5316386947725214403",
-  "message": "Group test",
+  "message": "Hello",
   "isGroup": true,
   "profile": "default"
 }
 ```
 
-Available actions: `send`, `unsend`, `image`, `link`, `friends`, `groups`, `group-members`, `me`, `status`
+## Directory and auth operations
 
-## Troubleshooting
+Implemented in channel plugin:
 
-- **Login Issues:** Run `openzca auth logout` then `openzca auth login`
-- **API Errors:** Try `openzca auth cache-refresh` or re-login
-- **File Uploads:** Check size (max 100MB) and path accessibility
+- Directory: self, peers, groups, group members
+- Auth: login via QR, login-with-QR start/wait API, logout
+- Pairing approval notification message
+
+## Status and diagnostics
+
+Account snapshots include:
+
+- runtime state: `running`, `lastStartAt`, `lastStopAt`, `lastError`
+- activity: `lastInboundAt`, `lastOutboundAt`
+- counters: `dispatchFailures`, `typingFailures`, `textChunkFailures`, `mediaFailures`, `failureNoticesSent`, `failureNoticeFailures`, `humanPassSkips`
+
+Status issue collector flags misconfiguration such as:
+
+- missing `openzca` binary
+- unauthenticated account
+- unsafe DM/group policy combinations
+- empty allowlist for `groupPolicy: allowlist`
+- wildcard group `allowFrom`
+- disabled failure notices
+
+## Development
+
+```bash
+npm install
+npm run typecheck
+```
+
+Key files:
+
+- `index.ts`: plugin registration
+- `src/channel.ts`: channel plugin, actions, auth, directory, gateway hooks
+- `src/monitor.ts`: listener loop + inbound processing + reply dispatch
+- `src/send.ts`: openzca command wrappers for send/action operations
+- `src/tool.ts`: dedicated agent tool schema and executor
+- `src/config-schema.ts`: config validation schema
 
 ## Credits
 
-Built on [openzca](https://openzca.com/) which uses [zca-js](https://github.com/RFS-ADRENO/zca-js).
+Built on [openzca](https://openzca.com/) and [zca-js](https://github.com/RFS-ADRENO/zca-js).

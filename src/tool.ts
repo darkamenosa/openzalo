@@ -6,6 +6,7 @@ import {
   sendMessageOpenzalo,
   unsendMessageOpenzalo,
 } from "./send.js";
+import { resolveOpenzaloThreadTarget } from "./target.js";
 
 const ACTIONS = [
   "send",
@@ -51,11 +52,11 @@ export const OpenzaloToolSchema = Type.Object(
     media: Type.Optional(
       Type.String({
         description:
-          "Media/file source for action=send/image (local path or URL). Supports image/video/voice and generic files (pdf/doc/xlsx/zip...).",
+          "Media/file source for action=send/image (http(s) URL only). Supports image/video/voice and generic files (pdf/doc/xlsx/zip...).",
       }),
     ),
-    path: Type.Optional(Type.String({ description: "Alias of media for local file paths" })),
-    filePath: Type.Optional(Type.String({ description: "Alias of media for local file paths" })),
+    path: Type.Optional(Type.String({ description: "Alias of media (http(s) URL only)" })),
+    filePath: Type.Optional(Type.String({ description: "Alias of media (http(s) URL only)" })),
     isGroup: Type.Optional(
       Type.Boolean({
         description: "Set true for group chats (required when threadId is a bare numeric group ID).",
@@ -81,7 +82,7 @@ export const OpenzaloToolSchema = Type.Object(
     ),
     profile: Type.Optional(Type.String({ description: "Profile name" })),
     query: Type.Optional(Type.String({ description: "Search query" })),
-    url: Type.Optional(Type.String({ description: "URL for media/link" })),
+    url: Type.Optional(Type.String({ description: "http(s) URL for media/link" })),
   },
   { additionalProperties: false },
 );
@@ -105,28 +106,6 @@ type ToolParams = {
   url?: string;
 };
 
-function normalizeThreadTarget(rawTarget: string): string {
-  const cleaned = rawTarget.replace(/^(openzalo|zlu):/i, "").trim();
-  if (!cleaned) {
-    return "";
-  }
-  const lowered = cleaned.toLowerCase();
-  if (lowered.startsWith("group:") || lowered.startsWith("user:")) {
-    return cleaned;
-  }
-  const aliasMatch = cleaned.match(/^([gu])-(\d{3,})$/i);
-  if (aliasMatch) {
-    const kind = aliasMatch[1]?.toLowerCase() === "g" ? "group" : "user";
-    const id = aliasMatch[2] ?? "";
-    return `${kind}:${id}`;
-  }
-  const labeledIdMatch = cleaned.match(/\((\d{3,})\)\s*$/);
-  if (labeledIdMatch?.[1]) {
-    return labeledIdMatch[1];
-  }
-  return cleaned;
-}
-
 function resolveThreadTarget(params: { threadId?: string; isGroup?: boolean }): {
   threadId: string;
   isGroup: boolean;
@@ -135,36 +114,11 @@ function resolveThreadTarget(params: { threadId?: string; isGroup?: boolean }): 
   if (!rawTarget) {
     throw new Error("threadId required");
   }
-  const normalized = normalizeThreadTarget(rawTarget);
-  if (!normalized) {
-    throw new Error("threadId required");
-  }
-
-  let threadId = normalized;
-  let inferredIsGroup: boolean | undefined;
-  if (normalized.toLowerCase().startsWith("group:")) {
-    threadId = normalized.slice("group:".length).trim();
-    inferredIsGroup = true;
-  } else if (normalized.toLowerCase().startsWith("user:")) {
-    threadId = normalized.slice("user:".length).trim();
-    inferredIsGroup = false;
-  }
-
-  if (!threadId) {
-    throw new Error("threadId required");
-  }
-
-  if (typeof params.isGroup === "boolean") {
-    if (typeof inferredIsGroup === "boolean" && inferredIsGroup !== params.isGroup) {
-      throw new Error(`threadId target "${rawTarget}" conflicts with isGroup=${String(params.isGroup)}`);
-    }
-    inferredIsGroup = params.isGroup;
-  }
-
-  return {
-    threadId,
-    isGroup: inferredIsGroup ?? false,
-  };
+  return resolveOpenzaloThreadTarget({
+    rawTarget,
+    isGroup: params.isGroup,
+    hasExplicitTarget: true,
+  });
 }
 
 function json(payload: unknown): AgentToolResult {
@@ -172,6 +126,16 @@ function json(payload: unknown): AgentToolResult {
     content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
     details: payload,
   };
+}
+
+function requireHttpMediaSource(rawValue: string): string {
+  const value = rawValue.trim();
+  if (/^https?:\/\//i.test(value)) {
+    return value;
+  }
+  throw new Error(
+    "Local file paths are disabled for openzalo media sends. Provide an http(s) URL in media/path/filePath/url.",
+  );
 }
 
 export async function executeOpenzaloTool(
@@ -188,19 +152,17 @@ export async function executeOpenzaloTool(
           isGroup: params.isGroup,
         });
         const media =
-          params.media?.trim() ||
-          params.path?.trim() ||
-          params.filePath?.trim() ||
-          undefined;
+          params.media?.trim() || params.path?.trim() || params.filePath?.trim() || undefined;
+        const mediaSource = media ? requireHttpMediaSource(media) : undefined;
         const message = params.message ?? "";
         const caption = params.caption;
-        if (!media && !message.trim()) {
+        if (!mediaSource && !message.trim()) {
           throw new Error("message required for send action when no media/path/filePath is provided");
         }
         const result = await sendMessageOpenzalo(target.threadId, message || (caption ?? ""), {
           profile: params.profile,
           isGroup: target.isGroup,
-          mediaUrl: media,
+          mediaUrl: mediaSource,
           caption: caption ?? undefined,
         });
         if (!result.ok) {
@@ -264,7 +226,8 @@ export async function executeOpenzaloTool(
         if (!imageSource) {
           throw new Error("url/media/path/filePath required for image action");
         }
-        const result = await sendImageOpenzalo(target.threadId, imageSource, {
+        const safeImageSource = requireHttpMediaSource(imageSource);
+        const result = await sendImageOpenzalo(target.threadId, safeImageSource, {
           profile: params.profile,
           isGroup: target.isGroup,
           caption: params.message ?? params.caption,
@@ -290,7 +253,8 @@ export async function executeOpenzaloTool(
         if (!params.url?.trim()) {
           throw new Error("url required for link action");
         }
-        const result = await sendLinkOpenzalo(target.threadId, params.url, {
+        const safeUrl = requireHttpMediaSource(params.url);
+        const result = await sendLinkOpenzalo(target.threadId, safeUrl, {
           profile: params.profile,
           isGroup: target.isGroup,
         });

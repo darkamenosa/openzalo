@@ -7,7 +7,7 @@ const DEFAULT_TIMEOUT = 30000;
 
 type ErrorWithCode = Error & { code?: string | number };
 type ZcaChildProcess = ReturnType<typeof spawn>;
-type OpenzcaSpawnResult = { proc: ZcaChildProcess; binary: string };
+type OpenzcaSpawnResult = { proc: ZcaChildProcess };
 
 export function resolveOpenzcaProfileEnv(): string | undefined {
   const fromOpenzca = process.env.OPENZCA_PROFILE?.trim();
@@ -15,11 +15,6 @@ export function resolveOpenzcaProfileEnv(): string | undefined {
     return fromOpenzca;
   }
   return process.env.ZCA_PROFILE?.trim();
-}
-
-function resolveOpenzcaBinaries(): string[] {
-  const primary = PRIMARY_OPENZCA_BINARY || "openzca";
-  return [primary];
 }
 
 function isNotFoundError(error: unknown): boolean {
@@ -61,23 +56,16 @@ async function spawnOpenzcaProcess(
   args: string[],
   options: SpawnOptions,
 ): Promise<OpenzcaSpawnResult> {
-  const candidates = resolveOpenzcaBinaries();
-  let lastError: Error | null = null;
-
-  for (const binary of candidates) {
-    try {
-      const proc = await createOpenzcaProcess(binary, args, options);
-      return { proc, binary };
-    } catch (error) {
-      if (isNotFoundError(error)) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        continue;
-      }
-      throw error instanceof Error ? error : new Error(String(error));
+  const binary = PRIMARY_OPENZCA_BINARY || "openzca";
+  try {
+    const proc = await createOpenzcaProcess(binary, args, options);
+    return { proc };
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      throw new Error(`No working openzca binary found. Tried: ${binary}`);
     }
+    throw error instanceof Error ? error : new Error(String(error));
   }
-
-  throw lastError ?? new Error(`No working openzca binary found. Tried: ${candidates.join(", ")}`);
 }
 
 function buildArgs(args: string[], options?: ZcaRunOptions): string[] {

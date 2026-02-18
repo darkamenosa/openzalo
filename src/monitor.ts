@@ -8,15 +8,12 @@ import {
   createReplyPrefixOptions,
   createTypingCallbacks,
   logTypingFailure,
-  mergeAllowlist,
   resolveChannelMediaMaxBytes,
-  summarizeMapping,
 } from "openclaw/plugin-sdk";
 import type {
   OpenzaloGroupMentionDetectionFailureMode,
   ResolvedOpenzaloAccount,
-  ZcaFriend,
-  ZcaGroup,
+  OpenzaloGroupConfig,
   ZcaMessage,
 } from "./types.js";
 import { getOpenzaloRuntime } from "./runtime.js";
@@ -85,18 +82,76 @@ function normalizeOpenzaloEntry(entry: string): string {
   return entry.replace(/^(openzalo|zlu):/i, "").trim();
 }
 
-function buildNameIndex<T>(items: T[], nameFn: (item: T) => string | undefined): Map<string, T[]> {
-  const index = new Map<string, T[]>();
-  for (const item of items) {
-    const name = nameFn(item)?.trim().toLowerCase();
-    if (!name) {
-      continue;
-    }
-    const list = index.get(name) ?? [];
-    list.push(item);
-    index.set(name, list);
+function isCanonicalAllowFromEntry(entry: string): boolean {
+  const normalized = normalizeOpenzaloEntry(entry);
+  if (!normalized || normalized === "*") {
+    return true;
   }
-  return index;
+  if (/^\d+$/.test(normalized)) {
+    return true;
+  }
+  return /^user:\d+$/i.test(normalized);
+}
+
+function isCanonicalGroupConfigKey(key: string): boolean {
+  const normalized = normalizeOpenzaloEntry(key);
+  if (!normalized || normalized === "*") {
+    return true;
+  }
+  if (/^\d+$/.test(normalized)) {
+    return true;
+  }
+  return /^group:\d+$/i.test(normalized);
+}
+
+function formatPreview(values: string[], limit = 6): string {
+  if (values.length <= limit) {
+    return values.join(", ");
+  }
+  return `${values.slice(0, limit).join(", ")} (+${values.length - limit} more)`;
+}
+
+function collectOpenzaloConfigWarnings(params: {
+  accountId: string;
+  allowFrom: Array<string | number> | undefined;
+  groups: Record<string, OpenzaloGroupConfig> | undefined;
+}): string[] {
+  const warnings: string[] = [];
+
+  const invalidAllowFrom = (params.allowFrom ?? [])
+    .map((entry) => String(entry).trim())
+    .filter((entry) => entry !== "" && !isCanonicalAllowFromEntry(entry));
+  if (invalidAllowFrom.length > 0) {
+    warnings.push(
+      `[${params.accountId}] unsupported allowFrom entries (use <id> or user:<id>): ${formatPreview(invalidAllowFrom)}`,
+    );
+  }
+
+  const groups = params.groups ?? {};
+  const invalidGroupKeys = Object.keys(groups).filter((key) => !isCanonicalGroupConfigKey(key));
+  if (invalidGroupKeys.length > 0) {
+    warnings.push(
+      `[${params.accountId}] unsupported group keys ignored (use <groupId> or group:<groupId>): ${formatPreview(invalidGroupKeys)}`,
+    );
+  }
+
+  const invalidGroupAllowFrom: string[] = [];
+  for (const [groupKey, groupConfig] of Object.entries(groups)) {
+    for (const rawEntry of groupConfig?.allowFrom ?? []) {
+      const entry = String(rawEntry).trim();
+      if (!entry || isCanonicalAllowFromEntry(entry)) {
+        continue;
+      }
+      invalidGroupAllowFrom.push(`${groupKey}:${entry}`);
+    }
+  }
+  if (invalidGroupAllowFrom.length > 0) {
+    warnings.push(
+      `[${params.accountId}] unsupported group allowFrom entries (use <id> or user:<id>): ${formatPreview(invalidGroupAllowFrom)}`,
+    );
+  }
+
+  return warnings;
 }
 
 type OpenzaloCoreRuntime = ReturnType<typeof getOpenzaloRuntime>;
@@ -143,17 +198,6 @@ function isSenderAllowed(senderId: string, allowFrom: string[]): boolean {
   return normalizedAllowFrom.some((entry) => entry === normalizedSenderId);
 }
 
-function normalizeGroupSlug(raw?: string | null): string {
-  const trimmed = raw?.trim().toLowerCase() ?? "";
-  if (!trimmed) {
-    return "";
-  }
-  return trimmed
-    .replace(/^#/, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 type OpenzaloGroupRule = {
   allow?: boolean;
   enabled?: boolean;
@@ -166,19 +210,20 @@ function resolveGroupRule(params: {
   groups: Record<string, OpenzaloGroupRule>;
 }): OpenzaloGroupRule | undefined {
   const groups = params.groups ?? {};
-  const candidates = [
-    params.groupId,
-    `group:${params.groupId}`,
-    params.groupName ?? "",
-    normalizeGroupSlug(params.groupName ?? ""),
-  ].filter(Boolean);
-  for (const candidate of candidates) {
-    const entry = groups[candidate];
-    if (entry) {
+  const normalizedGroupId = normalizeOpenzaloEntry(params.groupId);
+  const candidates = new Set([normalizedGroupId, `group:${normalizedGroupId}`]);
+  for (const [rawKey, entry] of Object.entries(groups)) {
+    const normalizedKey = normalizeOpenzaloEntry(rawKey);
+    if (candidates.has(normalizedKey)) {
       return entry;
     }
   }
-  return groups["*"];
+  for (const [rawKey, entry] of Object.entries(groups)) {
+    if (normalizeOpenzaloEntry(rawKey) === "*") {
+      return entry;
+    }
+  }
+  return undefined;
 }
 
 function isGroupAllowed(params: {
@@ -1864,146 +1909,13 @@ export async function monitorOpenzaloProvider(
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let resolveRunning: (() => void) | null = null;
 
-  try {
-    const profile = account.profile;
-    const allowFromEntries = (account.config.allowFrom ?? [])
-      .map((entry) => normalizeOpenzaloEntry(String(entry)))
-      .filter((entry) => entry && entry !== "*");
-    const groupsConfigForAllowFrom = account.config.groups ?? {};
-    const shouldResolveGroupAllowFromUsers = Object.values(groupsConfigForAllowFrom).some(
-      (groupConfig) =>
-        (groupConfig?.allowFrom ?? []).some((entry) => {
-          const cleaned = normalizeOpenzaloEntry(String(entry));
-          return cleaned !== "" && cleaned !== "*" && !/^\d+$/.test(cleaned);
-        }),
-    );
-
-    if (allowFromEntries.length > 0 || shouldResolveGroupAllowFromUsers) {
-      const result = await runOpenzca(["friend", "list", "-j"], { profile, timeout: 15000 });
-      if (result.ok) {
-        const friends = parseJsonOutput<ZcaFriend[]>(result.stdout) ?? [];
-        const byName = buildNameIndex(friends, (friend) => friend.displayName);
-        const additions: string[] = [];
-        const mapping: string[] = [];
-        const unresolved: string[] = [];
-        for (const entry of allowFromEntries) {
-          if (/^\d+$/.test(entry)) {
-            additions.push(entry);
-            continue;
-          }
-          const matches = byName.get(entry.toLowerCase()) ?? [];
-          const match = matches[0];
-          const id = match?.userId ? String(match.userId) : undefined;
-          if (id) {
-            additions.push(id);
-            mapping.push(`${entry}→${id}`);
-          } else {
-            unresolved.push(entry);
-          }
-        }
-        const allowFrom =
-          additions.length > 0
-            ? mergeAllowlist({ existing: account.config.allowFrom, additions })
-            : account.config.allowFrom;
-        const nextGroups = { ...groupsConfigForAllowFrom };
-        const groupMapping: string[] = [];
-        const groupUnresolved: string[] = [];
-        for (const [groupKey, groupConfig] of Object.entries(groupsConfigForAllowFrom)) {
-          const rawAllowFrom = groupConfig?.allowFrom ?? [];
-          if (rawAllowFrom.length === 0) {
-            continue;
-          }
-          const groupAdditions: string[] = [];
-          for (const rawEntry of rawAllowFrom) {
-            const cleaned = normalizeOpenzaloEntry(String(rawEntry));
-            if (!cleaned || cleaned === "*") {
-              continue;
-            }
-            if (/^\d+$/.test(cleaned)) {
-              groupAdditions.push(cleaned);
-              continue;
-            }
-            const matches = byName.get(cleaned.toLowerCase()) ?? [];
-            const match = matches[0];
-            const id = match?.userId ? String(match.userId) : undefined;
-            if (id) {
-              groupAdditions.push(id);
-              groupMapping.push(`${groupKey}:${cleaned}→${id}`);
-            } else {
-              groupUnresolved.push(`${groupKey}:${cleaned}`);
-            }
-          }
-          if (groupAdditions.length === 0) {
-            continue;
-          }
-          nextGroups[groupKey] = {
-            ...groupConfig,
-            allowFrom: mergeAllowlist({
-              existing: groupConfig.allowFrom,
-              additions: groupAdditions,
-            }),
-          };
-        }
-        account = {
-          ...account,
-          config: {
-            ...account.config,
-            allowFrom,
-            groups: nextGroups,
-          },
-        };
-        summarizeMapping("openzalo users", mapping, unresolved, runtime);
-        summarizeMapping("openzalo group allowFrom users", groupMapping, groupUnresolved, runtime);
-      } else {
-        runtime.log?.(`openzalo user resolve failed; using config entries. ${result.stderr}`);
-      }
-    }
-
-    const groupsConfig = account.config.groups ?? {};
-    const groupKeys = Object.keys(groupsConfig).filter((key) => key !== "*");
-    if (groupKeys.length > 0) {
-      const result = await runOpenzca(["group", "list", "-j"], { profile, timeout: 15000 });
-      if (result.ok) {
-        const groups = parseJsonOutput<ZcaGroup[]>(result.stdout) ?? [];
-        const byName = buildNameIndex(groups, (group) => group.name);
-        const mapping: string[] = [];
-        const unresolved: string[] = [];
-        const nextGroups = { ...groupsConfig };
-        for (const entry of groupKeys) {
-          const cleaned = normalizeOpenzaloEntry(entry);
-          if (/^\d+$/.test(cleaned)) {
-            if (!nextGroups[cleaned]) {
-              nextGroups[cleaned] = groupsConfig[entry];
-            }
-            mapping.push(`${entry}→${cleaned}`);
-            continue;
-          }
-          const matches = byName.get(cleaned.toLowerCase()) ?? [];
-          const match = matches[0];
-          const id = match?.groupId ? String(match.groupId) : undefined;
-          if (id) {
-            if (!nextGroups[id]) {
-              nextGroups[id] = groupsConfig[entry];
-            }
-            mapping.push(`${entry}→${id}`);
-          } else {
-            unresolved.push(entry);
-          }
-        }
-        account = {
-          ...account,
-          config: {
-            ...account.config,
-            groups: nextGroups,
-          },
-        };
-        summarizeMapping("openzalo groups", mapping, unresolved, runtime);
-      } else {
-        runtime.log?.(`openzalo group resolve failed; using config entries. ${result.stderr}`);
-      }
-    }
-  } catch (err) {
-    runtime.log?.(`openzalo resolve failed; using config entries. ${String(err)}`);
+  const configWarnings = collectOpenzaloConfigWarnings({
+    accountId: account.accountId,
+    allowFrom: account.config.allowFrom,
+    groups: account.config.groups,
+  });
+  for (const warning of configWarnings) {
+    runtime.error(`[openzalo] ${warning}`);
   }
 
   const mentionDetectionFailureWarnings = new Set<string>();

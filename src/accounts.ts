@@ -68,29 +68,6 @@ export async function checkZcaAuthenticated(profile: string): Promise<boolean> {
   return result.ok;
 }
 
-export async function resolveOpenzaloAccount(params: {
-  cfg: OpenClawConfig;
-  accountId?: string | null;
-}): Promise<ResolvedOpenzaloAccount> {
-  const accountId = normalizeAccountId(params.accountId);
-  const baseEnabled =
-    (params.cfg.channels?.openzalo as OpenzaloConfig | undefined)?.enabled !== false;
-  const merged = mergeOpenzaloAccountConfig(params.cfg, accountId);
-  const accountEnabled = merged.enabled !== false;
-  const enabled = baseEnabled && accountEnabled;
-  const profile = resolveZcaProfile(merged, accountId);
-  const authenticated = await checkZcaAuthenticated(profile);
-
-  return {
-    accountId,
-    name: merged.name?.trim() || undefined,
-    enabled,
-    profile,
-    authenticated,
-    config: merged,
-  };
-}
-
 export function resolveOpenzaloAccountSync(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
@@ -111,16 +88,6 @@ export function resolveOpenzaloAccountSync(params: {
     authenticated: false, // unknown without async check
     config: merged,
   };
-}
-
-export async function listEnabledOpenzaloAccounts(
-  cfg: OpenClawConfig,
-): Promise<ResolvedOpenzaloAccount[]> {
-  const ids = listOpenzaloAccountIds(cfg);
-  const accounts = await Promise.all(
-    ids.map((accountId) => resolveOpenzaloAccount({ cfg, accountId })),
-  );
-  return accounts.filter((account) => account.enabled);
 }
 
 export async function getZcaUserInfo(

@@ -24,7 +24,7 @@ import {
   resolveChannelMediaMaxBytes,
   setAccountEnabledInConfigSection,
 } from "openclaw/plugin-sdk";
-import type { ZcaFriend, ZcaGroup, ZcaUserInfo } from "./types.js";
+import type { OpenzaloActionsConfig, ZcaFriend, ZcaGroup, ZcaUserInfo } from "./types.js";
 import {
   listOpenzaloAccountIds,
   resolveDefaultOpenzaloAccountId,
@@ -51,6 +51,11 @@ import { collectOpenzaloStatusIssues } from "./status-issues.js";
 import { checkOpenzcaInstalled, parseJsonOutput, resolveOpenzcaProfileEnv, runOpenzca, runOpenzcaInteractive } from "./openzca.js";
 import { OPENZALO_DEFAULT_GROUP_HISTORY_LIMIT, OPENZALO_TEXT_LIMIT } from "./constants.js";
 import { getOpenzaloRuntime } from "./runtime.js";
+import {
+  normalizeOpenzaloTarget,
+  parseOpenzaloActionTarget,
+  resolveOpenzaloThreadTarget,
+} from "./target.js";
 
 const meta = {
   id: "openzalo",
@@ -170,11 +175,6 @@ function resolveOpenzaloGroupRequireMention({
   return account.config.groupRequireMention ?? true;
 }
 
-type OpenzaloActionsConfig = {
-  messages?: boolean;
-  reactions?: boolean;
-};
-
 type OpenzaloThreadingToolContext = {
   currentChannelId?: string;
   hasRepliedRef?: { value: boolean };
@@ -237,43 +237,6 @@ function coerceOpenzaloThreadingTarget(rawTarget?: string, chatType?: string): s
   return `group:${parsed.threadId}`;
 }
 
-function normalizeOpenzaloTarget(rawTarget: string): string {
-  const cleaned = rawTarget.replace(/^(openzalo|zlu):/i, "").trim();
-  if (!cleaned) {
-    return "";
-  }
-  const lowered = cleaned.toLowerCase();
-  if (lowered.startsWith("group:") || lowered.startsWith("user:")) {
-    return cleaned;
-  }
-  const aliasMatch = cleaned.match(/^([gu])-(\d{3,})$/i);
-  if (aliasMatch) {
-    const kind = aliasMatch[1]?.toLowerCase() === "g" ? "group" : "user";
-    const id = aliasMatch[2] ?? "";
-    return `${kind}:${id}`;
-  }
-  // Accept common display labels like "Name (123456789)" emitted by tooling/UI
-  // and normalize them to direct thread ids.
-  const labeledIdMatch = cleaned.match(/\((\d{3,})\)\s*$/);
-  if (labeledIdMatch?.[1]) {
-    return labeledIdMatch[1];
-  }
-  return cleaned;
-}
-
-function parseOpenzaloActionTarget(rawTarget: string): { threadId: string; isGroup: boolean } {
-  const normalized = normalizeOpenzaloTarget(rawTarget);
-  if (normalized.toLowerCase().startsWith("group:")) {
-    const threadId = normalized.slice("group:".length).trim();
-    return { threadId, isGroup: true };
-  }
-  if (normalized.toLowerCase().startsWith("user:")) {
-    const threadId = normalized.slice("user:".length).trim();
-    return { threadId, isGroup: false };
-  }
-  return { threadId: normalized, isGroup: false };
-}
-
 function readActionMessageField(params: Record<string, unknown>, key: string): string | undefined {
   const direct = readStringParam(params, key);
   if (direct) {
@@ -304,66 +267,15 @@ function resolveOpenzaloActionThread(
   if (!rawTarget) {
     throw new Error("thread target required");
   }
-
-  const parsed = parseOpenzaloActionTarget(rawTarget);
-  if (!parsed.threadId) {
-    throw new Error("thread target required");
-  }
-
-  const explicitGroup = typeof params.isGroup === "boolean" ? params.isGroup : undefined;
-  if (explicitGroup !== undefined) {
-    return {
-      threadId: parsed.threadId,
-      isGroup: explicitGroup,
-    };
-  }
-  if (parsed.isGroup) {
-    return {
-      threadId: parsed.threadId,
-      isGroup: true,
-    };
-  }
-
-  const groupHintTargets = [channelTarget, toTarget, contextTarget]
-    .filter((value): value is string => Boolean(value))
-    .map((value) => parseOpenzaloActionTarget(value))
-    .some((value) => value.isGroup && value.threadId === parsed.threadId);
-
-  if (groupHintTargets) {
-    return {
-      threadId: parsed.threadId,
-      isGroup: true,
-    };
-  }
-
-  const chatType = (
-    readStringParam(params, "chatType") ?? readStringParam(params, "chat_type")
-  )?.trim()
-    .toLowerCase();
-  if (chatType === "group") {
-    return {
-      threadId: parsed.threadId,
-      isGroup: true,
-    };
-  }
-  if (chatType === "direct") {
-    return {
-      threadId: parsed.threadId,
-      isGroup: false,
-    };
-  }
-
-  const isAmbiguousNumericTarget = /^\d{3,}$/.test(parsed.threadId);
-  if (hasExplicitTarget && isAmbiguousNumericTarget) {
-    throw new Error(
-      `Ambiguous thread target "${parsed.threadId}". Use "group:${parsed.threadId}" or "user:${parsed.threadId}", or set isGroup explicitly.`,
-    );
-  }
-
-  return {
-    threadId: parsed.threadId,
-    isGroup: false,
-  };
+  return resolveOpenzaloThreadTarget({
+    rawTarget,
+    isGroup: typeof params.isGroup === "boolean" ? params.isGroup : undefined,
+    hasExplicitTarget,
+    groupHintTargets: [channelTarget, toTarget, contextTarget].filter(
+      (value): value is string => Boolean(value),
+    ),
+    chatType: readStringParam(params, "chatType") ?? readStringParam(params, "chat_type"),
+  });
 }
 
 function readToolContextString(
