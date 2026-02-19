@@ -1,90 +1,183 @@
-# OpenZalo (newopenzalo)
+# @openclaw/openzalo
 
-OpenClaw channel plugin for personal Zalo accounts via `openzca` CLI.
+OpenClaw channel plugin for Zalo personal accounts via `openzca` CLI.
 
-## What is implemented
+> Warning: this is an unofficial personal-account automation integration. Use at your own risk.
 
-- Multi-account channel scaffold (`channels.openzalo.accounts.*`)
-- Auth integration via `openzca auth login` and `auth logout`
-- Outbound:
-  - DM text
-  - Group text (`group:<groupId>` target)
-  - Media/file send (auto routes to `msg voice`/`msg image`/`msg video`/`msg upload`, supports local path + URL)
-- Inbound monitor pipeline (`openzca listen --raw --keep-alive`):
-  - Normalize message payload
-  - Debounce/coalesce rapid multi-event inbound messages per sender+thread (merge text/media/mentions before routing)
-  - Enforce DM/group security policies
-  - Mention/command gating
-  - Dispatch replies through OpenClaw runtime
-- Directory helpers:
-  - Self (`me info --json`)
-  - Peers (`friend list --json`)
-  - Groups (`group list --json`)
-- Status probe via `openzca auth status`
-- Message actions:
-  - `react`, `read`, `edit`, `unsend`
-  - `renameGroup`, `addParticipant`, `removeParticipant`, `leaveGroup`
-  - `pin`, `unpin`, `list-pins`, `member-info`
-- Typing indicator on reply start (`sendTypingIndicators`, enabled by default)
+## AI Install Metadata
 
-## Config
+- Plugin id: `openzalo`
+- Channel id: `openzalo`
+- Package name: `@openclaw/openzalo`
+- Required external binary: `openzca`
 
-```json
+## Prerequisites
+
+- OpenClaw Gateway is installed and running.
+- `openzca` is installed and available in `PATH` (or configure `channels.openzalo.zcaBinary`).
+- You can authenticate with your Zalo account on the gateway machine.
+
+Example direct login with `openzca`:
+
+```bash
+openzca --profile default auth login
+```
+
+## Install (local checkout)
+
+From the OpenClaw repo root:
+
+```bash
+openclaw plugins install ./extensions/openzalo
+```
+
+Or from this plugin directory:
+
+```bash
+openclaw plugins install .
+```
+
+Restart Gateway after installation.
+
+## Quick Start
+
+1. Login account for this channel:
+
+```bash
+openclaw channels login --channel openzalo
+# optional multi-account
+openclaw channels login --channel openzalo --account work
+```
+
+2. Add channel config:
+
+```json5
 {
-  "channels": {
-    "openzalo": {
-      "enabled": true,
-      "profile": "default",
-      "zcaBinary": "openzca",
-      "dmPolicy": "pairing",
-      "allowFrom": ["<OWNER_USER_ID>"],
-      "groupPolicy": "allowlist",
-      "groupAllowFrom": ["<GROUP_ID>"],
-      "mediaLocalRoots": [
-        "/Users/<you>/.openclaw/workspace",
-        "/Users/<you>/.openclaw/media"
-      ],
-      "sendTypingIndicators": true,
-      "actions": {
-        "reactions": true,
-        "messages": true,
-        "groups": true,
-        "pins": true,
-        "memberInfo": true
-      },
-      "groups": {
-        "<GROUP_ID>": {
-          "requireMention": true,
-          "allowFrom": ["<ALLOWED_SENDER_ID>"],
-          "tools": {
-            "allow": ["group:messaging"],
-            "deny": ["group:fs", "group:runtime"]
-          },
-          "toolsBySender": {
-            "<OWNER_USER_ID>": {
-              "allow": ["group:runtime", "group:fs"]
-            }
-          }
-        }
-      }
-    }
-  }
+  channels: {
+    openzalo: {
+      enabled: true,
+      profile: "default",
+      dmPolicy: "pairing",
+      groupPolicy: "allowlist",
+      groupAllowFrom: ["<GROUP_ID>"],
+    },
+  },
 }
 ```
 
-## Target format
+3. Send test message:
+
+```bash
+openclaw message send --channel openzalo --target <userId> --message "Hello from OpenClaw"
+openclaw message send --channel openzalo --target group:<groupId> --message "Hello group"
+```
+
+## Configuration
+
+```json5
+{
+  channels: {
+    openzalo: {
+      enabled: true,
+      profile: "default", // default: account id
+      zcaBinary: "openzca", // or full path
+
+      // DM access: pairing | allowlist | open | disabled
+      dmPolicy: "pairing",
+      allowFrom: ["<OWNER_USER_ID>"],
+
+      // Group access: allowlist | open | disabled
+      groupPolicy: "allowlist",
+      groupAllowFrom: ["<GROUP_ID>"],
+
+      // Optional per-group overrides
+      groups: {
+        "<GROUP_ID>": {
+          enabled: true,
+          requireMention: true, // default true
+          allowFrom: ["<ALLOWED_SENDER_ID>"],
+          tools: {
+            allow: ["group:messaging"],
+            deny: ["group:fs", "group:runtime"],
+          },
+          toolsBySender: {
+            "<OWNER_USER_ID>": { allow: ["group:runtime", "group:fs"] },
+          },
+          skills: ["skill-id"],
+          systemPrompt: "Custom prompt for this group.",
+        },
+      },
+
+      historyLimit: 12,
+      textChunkLimit: 1800,
+      chunkMode: "length", // length | newline
+      blockStreaming: false,
+
+      mediaLocalRoots: [
+        "/Users/<you>/.openclaw/workspace",
+        "/Users/<you>/.openclaw/media",
+      ],
+      sendTypingIndicators: true,
+
+      actions: {
+        reactions: true,
+        messages: true, // read/edit/unsend
+        groups: true, // rename/add/remove/leave
+        pins: true, // pin/unpin/list-pins
+        memberInfo: true,
+      },
+    },
+  },
+}
+```
+
+## Multi-Account
+
+`channels.openzalo.accounts.<accountId>` overrides top-level fields:
+
+```yaml
+channels:
+  openzalo:
+    enabled: true
+    accounts:
+      default:
+        profile: default
+      work:
+        profile: work
+        enabled: true
+```
+
+Profile resolution is per account. If `zcaBinary` is not set, plugin uses:
+
+1. `channels.openzalo[.accounts.<id>].zcaBinary`
+2. `OPENZCA_BINARY` env var
+3. `openzca`
+
+## Target Format
 
 - DM target: `<userId>`
 - Group target: `group:<groupId>`
-- Group aliases accepted: `g-<groupId>`, `g:<groupId>`
+- Also accepted: `g-<groupId>`, `g:<groupId>`
 
-`group:` prefix is important so outbound uses `--group` when calling `openzca`.
+Use `group:` for explicit group sends.
 
 ## Notes
 
-- Requires `openzca` available in `PATH` (or set `channels.openzalo.zcaBinary`).
-- This extension is designed around `openzca` streaming JSON payloads from `listen --raw`.
-- Local outbound media paths must resolve under allowed roots (safe defaults under `~/.openclaw/*`; extend with `channels.openzalo.mediaLocalRoots` or per-account `mediaLocalRoots`).
-- Group control commands are authorized only for explicit allowlists (`channels.openzalo.allowFrom` or `channels.openzalo.groups.<groupId>.allowFrom`) when `commands.useAccessGroups` is enabled (default).
-- Group `requireMention` checks both mention text patterns and explicit `mentionIds` from `openzca`.
-- Inbound self echoes are dropped (`senderId == selfId` or `senderId == "0"`) to avoid reply loops.
+- Inbound listener uses `openzca listen --raw --keep-alive`.
+- Group messages require mention by default (`requireMention: true`) unless overridden.
+- Pairing mode sends approval code for unknown DM senders.
+- Local media is restricted to allowed roots for safety.
+
+Default safe media roots (under `OPENCLAW_STATE_DIR` or `~/.openclaw`):
+
+- `workspace`
+- `media`
+- `agents`
+- `sandboxes`
+
+## Troubleshooting
+
+- `openzca not found`: install `openzca` or set `channels.openzalo.zcaBinary`.
+- Auth check fails: run `openclaw channels login --channel openzalo` (or `openzca --profile <id> auth login`).
+- Group message dropped: verify `groupPolicy`, `groupAllowFrom`, and `groups.<groupId>` allowlist.
+- Local media blocked: add absolute paths to `channels.openzalo.mediaLocalRoots`.
