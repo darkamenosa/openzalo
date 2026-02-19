@@ -1,28 +1,39 @@
-import type { ZcaUserInfo } from "./types.js";
-import { runOpenzca, parseJsonOutput } from "./openzca.js";
+import { runOpenzcaCommand } from "./openzca.js";
+import type { OpenzaloProbe, ResolvedOpenzaloAccount } from "./types.js";
 
-export interface OpenzaloProbeResult {
-  ok: boolean;
-  user?: ZcaUserInfo;
-  error?: string;
+function toErrorText(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message;
+  }
+  return typeof err === "string" ? err : JSON.stringify(err);
 }
 
-export async function probeOpenzalo(
-  profile: string,
-  timeoutMs?: number,
-): Promise<OpenzaloProbeResult> {
-  const result = await runOpenzca(["me", "info", "-j"], {
-    profile,
-    timeout: timeoutMs,
-  });
+export async function probeOpenzaloAuth(params: {
+  account: ResolvedOpenzaloAccount;
+  timeoutMs?: number;
+}): Promise<OpenzaloProbe> {
+  const { account, timeoutMs } = params;
+  const base: OpenzaloProbe = {
+    ok: false,
+    profile: account.profile,
+    binary: account.zcaBinary,
+  };
 
-  if (!result.ok) {
-    return { ok: false, error: result.stderr || "Failed to probe" };
+  try {
+    await runOpenzcaCommand({
+      binary: account.zcaBinary,
+      profile: account.profile,
+      args: ["auth", "status"],
+      timeoutMs: timeoutMs ?? 8_000,
+    });
+    return {
+      ...base,
+      ok: true,
+    };
+  } catch (err) {
+    return {
+      ...base,
+      error: toErrorText(err),
+    };
   }
-
-  const user = parseJsonOutput<ZcaUserInfo>(result.stdout);
-  if (!user) {
-    return { ok: false, error: "Failed to parse user info" };
-  }
-  return { ok: true, user };
 }

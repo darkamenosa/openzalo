@@ -1,220 +1,103 @@
-import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "openclaw/plugin-sdk";
-
-// openzca wrapper types
-export type ZcaRunOptions = {
-  profile?: string;
-  cwd?: string;
-  timeout?: number;
-};
-
-export type ZcaResult = {
-  ok: boolean;
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-};
-
-export type ZcaProfile = {
-  name: string;
-  label?: string;
-  isDefault?: boolean;
-};
-
-export type ZcaFriend = {
-  userId: string;
-  displayName: string;
-  avatar?: string;
-};
-
-export type ZcaGroup = {
-  groupId: string;
-  name: string;
-  memberCount?: number;
-};
-
-export type ZcaMention = {
-  uid?: string;
-  pos?: number;
-  len?: number;
-  type?: number;
-  text?: string;
-};
-
-export type ZcaQuoteContext = {
-  ownerId?: string;
-  senderName?: string;
-  msg?: string;
-  attach?: unknown;
-  ts?: number;
-  cliMsgId?: string;
-  globalMsgId?: string;
-  cliMsgType?: string;
-  mediaPath?: string;
-  mediaPaths?: string[];
-  mediaUrl?: string;
-  mediaUrls?: string[];
-  mediaType?: string;
-  mediaTypes?: string[];
-};
-
-export type ZcaMessageMetadata = {
-  isGroup?: boolean;
-  chatType?: string;
-  threadId?: string;
-  targetId?: string;
-  threadName?: string;
-  senderName?: string;
-  senderDisplayName?: string;
-  senderId?: string;
-  fromId?: string;
-  toId?: string;
-  msgType?: string;
-  quote?: ZcaQuoteContext;
-  quoteMediaPath?: string;
-  quoteMediaPaths?: string[];
-  quoteMediaUrl?: string;
-  quoteMediaUrls?: string[];
-  quoteMediaType?: string;
-  quoteMediaTypes?: string[];
-  timestamp?: number;
-  mediaPath?: string;
-  mediaPaths?: string[];
-  mediaUrl?: string;
-  mediaUrls?: string[];
-  mediaType?: string;
-  mediaTypes?: string[];
-  mediaKind?: string;
-  mentions?: ZcaMention[];
-  mentionIds?: string[];
-  mentionCount?: number;
-};
-
-export type ZcaMessage = {
-  threadId: string;
-  targetId?: string;
-  conversationId?: string;
-  msgId?: string;
-  cliMsgId?: string;
-  type: number;
-  chatType?: string;
-  content?: string;
-  timestamp: number;
-  msgType?: string;
-  quote?: ZcaQuoteContext;
-  quoteMediaPath?: string;
-  quoteMediaPaths?: string[];
-  quoteMediaUrl?: string;
-  quoteMediaUrls?: string[];
-  quoteMediaType?: string;
-  quoteMediaTypes?: string[];
-  mediaPath?: string;
-  mediaPaths?: string[];
-  mediaUrl?: string;
-  mediaUrls?: string[];
-  mediaType?: string;
-  mediaTypes?: string[];
-  mediaKind?: string;
-  mentions?: ZcaMention[];
-  mentionIds?: string[];
-  metadata?: ZcaMessageMetadata;
-  senderId?: string;
-  senderName?: string;
-  senderDisplayName?: string;
-  toId?: string;
-  ts?: string;
-};
-
-export type ZcaUserInfo = {
-  userId: string;
-  displayName: string;
-  avatar?: string;
-};
-
-export type CommonOptions = {
-  profile?: string;
-  json?: boolean;
-};
-
-export type SendOptions = CommonOptions & {
-  group?: boolean;
-};
-
-export type ListenOptions = CommonOptions & {
-  raw?: boolean;
-  keepAlive?: boolean;
-  webhook?: string;
-  echo?: boolean;
-  prefix?: string;
-};
+import type {
+  BaseProbeResult,
+  BlockStreamingCoalesceConfig,
+  DmConfig,
+  DmPolicy,
+  GroupPolicy,
+  GroupToolPolicyBySenderConfig,
+  GroupToolPolicyConfig,
+  MarkdownConfig,
+  OpenClawConfig,
+} from "openclaw/plugin-sdk";
 
 export type OpenzaloGroupConfig = {
-  allow?: boolean;
   enabled?: boolean;
+  requireMention?: boolean;
   allowFrom?: Array<string | number>;
   tools?: GroupToolPolicyConfig;
   toolsBySender?: GroupToolPolicyBySenderConfig;
-  requireMention?: boolean;
+  skills?: string[];
+  systemPrompt?: string;
 };
 
-export type OpenzaloGroupMentionDetectionFailureMode =
-  | "allow"
-  | "deny"
-  | "allow-with-warning";
-
-export type OpenzaloActionsConfig = {
-  messages?: boolean;
+export type OpenzaloActionConfig = {
   reactions?: boolean;
+  messages?: boolean;
+  groups?: boolean;
+  pins?: boolean;
+  memberInfo?: boolean;
 };
 
 export type OpenzaloAccountConfig = {
-  enabled?: boolean;
   name?: string;
+  enabled?: boolean;
   profile?: string;
-  actions?: OpenzaloActionsConfig;
+  zcaBinary?: string;
+  dmPolicy?: DmPolicy;
+  allowFrom?: Array<string | number>;
+  groupPolicy?: GroupPolicy;
+  groupAllowFrom?: Array<string | number>;
+  groups?: Record<string, OpenzaloGroupConfig>;
+  markdown?: MarkdownConfig;
+  historyLimit?: number;
+  dmHistoryLimit?: number;
+  dms?: Record<string, DmConfig>;
   textChunkLimit?: number;
   chunkMode?: "length" | "newline";
+  blockStreaming?: boolean;
+  blockStreamingCoalesce?: BlockStreamingCoalesceConfig;
   mediaMaxMb?: number;
-  dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
-  allowFrom?: Array<string | number>;
-  groupPolicy?: "open" | "allowlist" | "disabled";
-  groups?: Record<string, OpenzaloGroupConfig>;
-  groupRequireMention?: boolean;
-  groupMentionDetectionFailure?: OpenzaloGroupMentionDetectionFailureMode;
-  historyLimit?: number;
-  sendFailureNotice?: boolean;
-  sendFailureMessage?: string;
-  messagePrefix?: string;
-  responsePrefix?: string;
+  mediaLocalRoots?: string[];
+  sendTypingIndicators?: boolean;
+  actions?: OpenzaloActionConfig;
 };
 
-export type OpenzaloConfig = {
-  enabled?: boolean;
-  name?: string;
-  profile?: string;
-  actions?: OpenzaloActionsConfig;
-  textChunkLimit?: number;
-  chunkMode?: "length" | "newline";
-  mediaMaxMb?: number;
-  defaultAccount?: string;
-  dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
-  allowFrom?: Array<string | number>;
-  groupPolicy?: "open" | "allowlist" | "disabled";
-  groups?: Record<string, OpenzaloGroupConfig>;
-  groupRequireMention?: boolean;
-  groupMentionDetectionFailure?: OpenzaloGroupMentionDetectionFailureMode;
-  historyLimit?: number;
-  sendFailureNotice?: boolean;
-  sendFailureMessage?: string;
-  messagePrefix?: string;
-  responsePrefix?: string;
+export type OpenzaloConfig = OpenzaloAccountConfig & {
   accounts?: Record<string, OpenzaloAccountConfig>;
+};
+
+export type CoreConfig = OpenClawConfig & {
+  channels?: OpenClawConfig["channels"] & {
+    openzalo?: OpenzaloConfig;
+  };
 };
 
 export type ResolvedOpenzaloAccount = {
   accountId: string;
-  name?: string;
   enabled: boolean;
+  name?: string;
   profile: string;
-  authenticated: boolean;
+  zcaBinary: string;
+  configured: boolean;
   config: OpenzaloAccountConfig;
+};
+
+export type OpenzaloProbe = BaseProbeResult<string> & {
+  profile: string;
+  binary: string;
+};
+
+export type OpenzcaRawPayload = Record<string, unknown>;
+
+export type OpenzaloInboundMessage = {
+  messageId: string;
+  msgId?: string;
+  cliMsgId?: string;
+  threadId: string;
+  toId?: string;
+  dmPeerId?: string;
+  senderId: string;
+  senderName?: string;
+  text: string;
+  timestamp: number;
+  isGroup: boolean;
+  quoteMsgId?: string;
+  quoteCliMsgId?: string;
+  quoteSender?: string;
+  quoteText?: string;
+  mentionIds: string[];
+  mediaPaths: string[];
+  mediaUrls: string[];
+  mediaTypes: string[];
+  raw: OpenzcaRawPayload;
 };

@@ -1,49 +1,50 @@
 import { MarkdownConfigSchema, ToolPolicySchema } from "openclaw/plugin-sdk";
 import { z } from "zod";
-import { OPENZALO_TEXT_LIMIT } from "./constants.js";
 
 const allowFromEntry = z.union([z.string(), z.number()]);
-const toolPolicyBySenderSchema = z.object({}).catchall(ToolPolicySchema).optional();
 
-const groupConfigSchema = z.object({
-  allow: z.boolean().optional(),
+const openzaloActionSchema = z
+  .object({
+    reactions: z.boolean().default(true),
+    messages: z.boolean().default(true),
+    groups: z.boolean().default(true),
+    pins: z.boolean().default(true),
+    memberInfo: z.boolean().default(true),
+  })
+  .optional();
+
+const openzaloGroupConfigSchema = z.object({
   enabled: z.boolean().optional(),
+  requireMention: z.boolean().optional(),
   allowFrom: z.array(allowFromEntry).optional(),
   tools: ToolPolicySchema,
-  toolsBySender: toolPolicyBySenderSchema,
-  requireMention: z.boolean().optional(),
-});
-
-const actionsConfigSchema = z.object({
-  messages: z.boolean().optional(),
-  reactions: z.boolean().optional(),
+  toolsBySender: z.record(z.string(), ToolPolicySchema).optional(),
+  skills: z.array(z.string()).optional(),
+  systemPrompt: z.string().optional(),
 });
 
 const openzaloAccountSchema = z.object({
   name: z.string().optional(),
   enabled: z.boolean().optional(),
-  markdown: MarkdownConfigSchema,
-  actions: actionsConfigSchema.optional(),
   profile: z.string().optional(),
-  textChunkLimit: z.number().int().positive().max(OPENZALO_TEXT_LIMIT).optional(),
-  chunkMode: z.enum(["length", "newline"]).optional(),
-  mediaMaxMb: z.number().positive().optional(),
+  zcaBinary: z.string().optional(),
+  markdown: MarkdownConfigSchema,
   dmPolicy: z.enum(["pairing", "allowlist", "open", "disabled"]).optional(),
   allowFrom: z.array(allowFromEntry).optional(),
-  groupPolicy: z.enum(["disabled", "allowlist", "open"]).optional(),
-  groups: z.object({}).catchall(groupConfigSchema).optional(),
-  groupRequireMention: z.boolean().optional(),
-  groupMentionDetectionFailure: z
-    .enum(["allow", "deny", "allow-with-warning"])
-    .optional(),
+  groupPolicy: z.enum(["open", "disabled", "allowlist"]).optional(),
+  groupAllowFrom: z.array(allowFromEntry).optional(),
+  groups: z.object({}).catchall(openzaloGroupConfigSchema).optional(),
   historyLimit: z.number().int().min(0).optional(),
-  sendFailureNotice: z.boolean().optional(),
-  sendFailureMessage: z.string().optional(),
-  messagePrefix: z.string().optional(),
-  responsePrefix: z.string().optional(),
+  dmHistoryLimit: z.number().int().min(0).optional(),
+  textChunkLimit: z.number().int().positive().optional(),
+  chunkMode: z.enum(["length", "newline"]).optional(),
+  blockStreaming: z.boolean().optional(),
+  mediaMaxMb: z.number().int().positive().optional(),
+  mediaLocalRoots: z.array(z.string()).optional(),
+  sendTypingIndicators: z.boolean().optional(),
+  actions: openzaloActionSchema,
 });
 
 export const OpenzaloConfigSchema = openzaloAccountSchema.extend({
   accounts: z.object({}).catchall(openzaloAccountSchema).optional(),
-  defaultAccount: z.string().optional(),
 });

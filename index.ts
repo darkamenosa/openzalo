@@ -1,35 +1,16 @@
-import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { ChannelPlugin, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
-import { openzaloDock, openzaloPlugin } from "./src/channel.js";
+import { openzaloPlugin } from "./src/channel.js";
 import { setOpenzaloRuntime } from "./src/runtime.js";
-import { OpenzaloToolSchema, executeOpenzaloTool } from "./src/tool.js";
 
 const plugin = {
   id: "openzalo",
-  name: "Zalo Personal",
-  description: "Zalo personal account messaging via openzca",
+  name: "OpenZalo",
+  description: "OpenZalo channel plugin (personal account via openzca CLI)",
   configSchema: emptyPluginConfigSchema(),
   register(api: OpenClawPluginApi) {
     setOpenzaloRuntime(api.runtime);
-    // Register channel plugin (for onboarding & gateway)
-    api.registerChannel({ plugin: openzaloPlugin, dock: openzaloDock });
-
-    // Register agent tool
-    api.registerTool({
-      name: "openzalo",
-      label: "Zalo Personal",
-      description:
-        "Send messages and access data via Zalo personal account. " +
-        'For targets, prefer "user:<id>" or "group:<id>" (or set isGroup=true for bare numeric IDs). ' +
-        "Action send supports plain text and media/file upload (image/video/voice/pdf/doc/xlsx/zip...) via media/path/filePath. " +
-        "For unsend follow-ups across chats, resolve target thread first and use message action=read on that thread to recover msgId/cliMsgId before unsend. " +
-        "If a file path/URL is already known, send it directly via action=send instead of running extra preprocessing steps. " +
-        "Actions: send, unsend, image, link, " +
-        "friends (list/search friends), groups (list groups), group-members (list members in a group), " +
-        "me (profile info), status (auth check).",
-      parameters: OpenzaloToolSchema,
-      execute: executeOpenzaloTool,
-    } as AnyAgentTool);
+    api.registerChannel({ plugin: openzaloPlugin as ChannelPlugin });
   },
 };
 
