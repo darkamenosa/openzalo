@@ -182,15 +182,20 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
     },
   },
   threading: {
-    buildToolContext: ({ context, hasRepliedRef }) => ({
-      currentChannelId: context.To?.trim() || undefined,
-      currentThreadTs:
-        context.MessageSidFull ??
-        context.MessageSid ??
-        context.ReplyToIdFull ??
-        context.ReplyToId,
-      hasRepliedRef,
-    }),
+    buildToolContext: ({ context, hasRepliedRef }) => {
+      const normalizedCurrentChannelId = context.To
+        ? normalizeOpenzaloMessagingTarget(context.To.trim())
+        : "";
+      return {
+        currentChannelId: normalizedCurrentChannelId || context.To?.trim() || undefined,
+        currentThreadTs:
+          context.MessageSidFull ??
+          context.MessageSid ??
+          context.ReplyToIdFull ??
+          context.ReplyToId,
+        hasRepliedRef,
+      };
+    },
   },
   messaging: {
     normalizeTarget: normalizeOpenzaloMessagingTarget,
@@ -223,7 +228,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
         const parsed = parseOpenzaloTarget(to);
         return {
           ok: true,
-          to: parsed.isGroup ? `group:${parsed.threadId}` : parsed.threadId,
+          to: parsed.isGroup ? `group:${parsed.threadId}` : `user:${parsed.threadId}`,
         };
       } catch (err) {
         return {

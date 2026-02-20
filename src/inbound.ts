@@ -25,6 +25,7 @@ import {
   formatOpenzaloOutboundTarget,
   normalizeOpenzaloAllowEntry,
   parseOpenzaloTarget,
+  resolveOpenzaloDirectPeerId,
 } from "./normalize.js";
 import { getOpenzaloRuntime } from "./runtime.js";
 import { sendMediaOpenzalo, sendTextOpenzalo, sendTypingOpenzalo, type OpenzaloSendReceipt } from "./send.js";
@@ -152,13 +153,25 @@ function resolveOpenzaloCommandBody(params: {
   return trimmed;
 }
 
-function buildOutboundMessageEventText(params: { shortId: string; preview?: string }): string {
+function buildOutboundMessageEventText(params: {
+  shortId: string;
+  preview?: string;
+  msgId?: string;
+  cliMsgId?: string;
+}): string {
+  const refs = [
+    `[message_id:${params.shortId}]`,
+    params.msgId ? `[msg_id:${params.msgId}]` : "",
+    params.cliMsgId ? `[cli_msg_id:${params.cliMsgId}]` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const preview = (params.preview ?? "").replace(/\s+/g, " ").trim();
   if (!preview) {
-    return `Assistant sent [message_id:${params.shortId}]`;
+    return `Assistant sent ${refs}`;
   }
   const clipped = preview.length > 80 ? `${preview.slice(0, 80)}...` : preview;
-  return `Assistant sent "${clipped}" [message_id:${params.shortId}]`;
+  return `Assistant sent "${clipped}" ${refs}`;
 }
 
 function logOpenzaloGroupAllowlistHint(params: {
@@ -286,6 +299,14 @@ export async function handleOpenzaloInbound(params: {
 }): Promise<void> {
   const { message, account, cfg, runtime, botUserId, statusSink } = params;
   const core = getOpenzaloRuntime();
+  const directPeerId = message.isGroup
+    ? ""
+    : resolveOpenzaloDirectPeerId({
+        dmPeerId: message.dmPeerId,
+        senderId: message.senderId,
+        toId: message.toId,
+        threadId: message.threadId,
+      }) || message.senderId;
 
   const rawBody = message.text.trim();
   const hasMedia = message.mediaUrls.length > 0 || message.mediaPaths.length > 0;
@@ -401,7 +422,7 @@ export async function handleOpenzaloInbound(params: {
     accountId: account.accountId,
     peer: {
       kind: message.isGroup ? "group" : "direct",
-      id: message.isGroup ? message.threadId : message.dmPeerId || message.senderId,
+      id: message.isGroup ? message.threadId : directPeerId,
     },
   });
   const mentionRegexes = core.channel.mentions.buildMentionRegexes(cfg as OpenClawConfig, route.agentId);
@@ -557,7 +578,7 @@ export async function handleOpenzaloInbound(params: {
     );
   }
 
-  const targetThreadId = message.isGroup ? message.threadId : message.dmPeerId || message.senderId;
+  const targetThreadId = message.isGroup ? message.threadId : directPeerId;
   const outboundTarget = formatOpenzaloOutboundTarget({
     threadId: targetThreadId,
     isGroup: message.isGroup,
@@ -647,7 +668,7 @@ export async function handleOpenzaloInbound(params: {
     MediaType: mergedMediaTypes[0],
     MediaTypes: mergedMediaTypes.length > 0 ? mergedMediaTypes : undefined,
     From: message.isGroup ? `openzalo:group:${message.threadId}` : `openzalo:${message.senderId}`,
-    To: `openzalo:${outboundTarget}`,
+    To: outboundTarget,
     SessionKey: route.sessionKey,
     AccountId: route.accountId,
     ChatType: message.isGroup ? "group" : "direct",
@@ -670,7 +691,7 @@ export async function handleOpenzaloInbound(params: {
     ReplyToBody: message.quoteText,
     Timestamp: message.timestamp,
     OriginatingChannel: CHANNEL_ID,
-    OriginatingTo: `openzalo:${outboundTarget}`,
+    OriginatingTo: outboundTarget,
     CommandAuthorized:
       message.isGroup ? commandGate.commandAuthorized : dmPolicy === "open" || senderAllowedDm,
   });
@@ -739,6 +760,8 @@ export async function handleOpenzaloInbound(params: {
             buildOutboundMessageEventText({
               shortId: remembered.shortId,
               preview: remembered.preview,
+              msgId: remembered.msgId,
+              cliMsgId: remembered.cliMsgId,
             }),
             {
               sessionKey: route.sessionKey,

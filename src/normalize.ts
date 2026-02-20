@@ -83,6 +83,56 @@ export function parseOpenzaloTarget(raw: string): {
   };
 }
 
+function stripDirectTargetPrefix(value: string): string {
+  return value.replace(/^(dm|user):/i, "").trim();
+}
+
+function stripGroupTargetPrefix(value: string): string {
+  return value.replace(/^group:/i, "").trim();
+}
+
+export function resolveOpenzaloDirectPeerId(params: {
+  dmPeerId?: string | null;
+  senderId?: string | null;
+  toId?: string | null;
+  threadId?: string | null;
+}): string {
+  const candidates = [params.dmPeerId, params.senderId, params.toId, params.threadId];
+  let groupAliasFallback = "";
+
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    const normalized = normalizeOpenzaloMessagingTarget(candidate);
+    if (!normalized) {
+      continue;
+    }
+
+    if (/^group:/i.test(normalized)) {
+      if (!groupAliasFallback) {
+        groupAliasFallback = stripGroupTargetPrefix(normalized);
+      }
+      continue;
+    }
+
+    if (/^(dm|user):/i.test(normalized)) {
+      const direct = stripDirectTargetPrefix(normalized);
+      if (direct) {
+        return direct;
+      }
+      continue;
+    }
+
+    return normalized;
+  }
+
+  if (groupAliasFallback) {
+    return groupAliasFallback;
+  }
+  return "";
+}
+
 export function formatOpenzaloOutboundTarget(params: { threadId: string; isGroup: boolean }): string {
-  return params.isGroup ? `group:${params.threadId}` : params.threadId;
+  return params.isGroup ? `group:${params.threadId}` : `user:${params.threadId}`;
 }

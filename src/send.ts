@@ -38,6 +38,12 @@ export type OpenzaloSendReceipt = {
   textPreview?: string;
 };
 
+function resolveOutboundMessageId(params: {
+  msgId?: string;
+}): string {
+  return params.msgId || "ok";
+}
+
 function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
 }
@@ -396,7 +402,7 @@ export async function sendTextOpenzalo(options: SendTextOptions): Promise<Openza
       cliMsgId: refs.cliMsgId,
     });
     return {
-      messageId: refs.msgId || refs.cliMsgId || "ok",
+      messageId: resolveOutboundMessageId(refs),
       msgId: refs.msgId,
       cliMsgId: refs.cliMsgId,
       kind: "text",
@@ -503,7 +509,7 @@ export async function sendMediaOpenzalo(
     }
     const refs = parseOpenzcaMessageRefs(result.stdout);
     const mediaReceipt: OpenzaloSendReceipt = {
-      messageId: refs.msgId || refs.cliMsgId || "ok",
+      messageId: resolveOutboundMessageId(refs),
       msgId: refs.msgId,
       cliMsgId: refs.cliMsgId,
       kind: "media",
