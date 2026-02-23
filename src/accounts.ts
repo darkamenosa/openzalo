@@ -33,14 +33,71 @@ function resolveAccountConfig(cfg: CoreConfig, accountId: string): OpenzaloAccou
   return accounts[accountId] as OpenzaloAccountConfig | undefined;
 }
 
+function hasExplicitAccountConfig(config: OpenzaloAccountConfig | undefined): boolean {
+  if (!config) {
+    return false;
+  }
+  if (config.profile?.trim()) {
+    return true;
+  }
+  if (config.zcaBinary?.trim()) {
+    return true;
+  }
+  if (config.dmPolicy) {
+    return true;
+  }
+  if (Array.isArray(config.allowFrom) && config.allowFrom.length > 0) {
+    return true;
+  }
+  if (config.groupPolicy) {
+    return true;
+  }
+  if (Array.isArray(config.groupAllowFrom) && config.groupAllowFrom.length > 0) {
+    return true;
+  }
+  if (config.groups && Object.keys(config.groups).length > 0) {
+    return true;
+  }
+  if (typeof config.historyLimit === "number") {
+    return true;
+  }
+  if (typeof config.dmHistoryLimit === "number") {
+    return true;
+  }
+  if (typeof config.textChunkLimit === "number") {
+    return true;
+  }
+  if (config.chunkMode) {
+    return true;
+  }
+  if (typeof config.blockStreaming === "boolean") {
+    return true;
+  }
+  if (typeof config.mediaMaxMb === "number") {
+    return true;
+  }
+  if (Array.isArray(config.mediaLocalRoots) && config.mediaLocalRoots.length > 0) {
+    return true;
+  }
+  if (typeof config.sendTypingIndicators === "boolean") {
+    return true;
+  }
+  if (config.actions && Object.keys(config.actions).length > 0) {
+    return true;
+  }
+  if (config.dms && Object.keys(config.dms).length > 0) {
+    return true;
+  }
+  return false;
+}
+
 function mergeOpenzaloAccountConfig(cfg: CoreConfig, accountId: string): OpenzaloAccountConfig {
   const base = (cfg.channels?.openzalo ?? {}) as OpenzaloAccountConfig & {
     accounts?: unknown;
   };
   const { accounts: _ignored, ...rest } = base;
   const account = resolveAccountConfig(cfg, accountId) ?? {};
-  const chunkMode = account.chunkMode ?? rest.chunkMode ?? "length";
-  return { ...rest, ...account, chunkMode };
+  return { ...rest, ...account };
 }
 
 export function resolveOpenzaloAccount(params: {
@@ -49,10 +106,17 @@ export function resolveOpenzaloAccount(params: {
 }): ResolvedOpenzaloAccount {
   const accountId = normalizeAccountId(params.accountId);
   const baseEnabled = params.cfg.channels?.openzalo?.enabled;
+  const baseConfig = (params.cfg.channels?.openzalo ?? {}) as OpenzaloAccountConfig & {
+    accounts?: unknown;
+  };
+  const { accounts: _ignored, ...topLevelConfig } = baseConfig;
+  const accountConfig = resolveAccountConfig(params.cfg, accountId);
   const merged = mergeOpenzaloAccountConfig(params.cfg, accountId);
   const accountEnabled = merged.enabled !== false;
   const profile = merged.profile?.trim() || accountId;
   const zcaBinary = merged.zcaBinary?.trim() || process.env.OPENZCA_BINARY?.trim() || "openzca";
+  const configured =
+    hasExplicitAccountConfig(topLevelConfig) || hasExplicitAccountConfig(accountConfig);
 
   return {
     accountId,
@@ -60,7 +124,7 @@ export function resolveOpenzaloAccount(params: {
     name: merged.name?.trim() || undefined,
     profile,
     zcaBinary,
-    configured: Boolean(profile),
+    configured,
     config: merged,
   };
 }

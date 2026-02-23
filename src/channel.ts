@@ -27,10 +27,12 @@ import {
   resolveOpenzaloGroupToolPolicy,
   resolveOpenzaloRequireMention,
 } from "./policy.js";
+import { openzaloOnboardingAdapter } from "./onboarding.js";
 import { probeOpenzaloAuth } from "./probe.js";
 import { getOpenzaloRuntime } from "./runtime.js";
 import { sendMediaOpenzalo, sendTextOpenzalo } from "./send.js";
 import { OpenzaloConfigSchema } from "./config-schema.js";
+import { collectOpenzaloStatusIssues, resolveOpenzaloAccountState } from "./status.js";
 import { runOpenzcaCommand } from "./openzca.js";
 import type { CoreConfig, OpenzaloProbe, ResolvedOpenzaloAccount } from "./types.js";
 
@@ -50,6 +52,7 @@ const meta = {
 export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProbe> = {
   id: "openzalo",
   meta,
+  onboarding: openzaloOnboardingAdapter,
   capabilities: {
     chatTypes: ["direct", "group"],
     media: true,
@@ -93,10 +96,9 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
         accountId,
         clearBaseFields: ["name", "profile", "zcaBinary"],
       }),
-    isConfigured: async (account) => {
-      const probe = await probeOpenzaloAuth({ account, timeoutMs: 6000 });
-      return probe.ok;
-    },
+    // Keep startup config static so gateway-level restart/backoff can recover
+    // from transient auth/CLI failures after updates or restarts.
+    isConfigured: (account) => account.configured,
     describeAccount: (account) => ({
       accountId: account.accountId,
       name: account.name,
@@ -292,7 +294,10 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
       lastStartAt: null,
       lastStopAt: null,
       lastError: null,
+      profile: null,
+      zcaBinary: null,
     },
+    collectStatusIssues: collectOpenzaloStatusIssues,
     buildChannelSummary: ({ snapshot }) => ({
       configured: snapshot.configured ?? false,
       profile: snapshot.profile ?? null,
@@ -321,10 +326,17 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
       lastInboundAt: runtime?.lastInboundAt ?? null,
       lastOutboundAt: runtime?.lastOutboundAt ?? null,
     }),
+    resolveAccountState: ({ enabled, configured }) =>
+      resolveOpenzaloAccountState({ enabled, configured }),
   },
   gateway: {
     startAccount: async (ctx) => {
       const account = ctx.account;
+      ctx.setStatus({
+        accountId: account.accountId,
+        profile: account.profile,
+        zcaBinary: account.zcaBinary,
+      });
       ctx.log?.info(
         `[${account.accountId}] starting provider (profile=${account.profile}, binary=${account.zcaBinary})`,
       );
@@ -338,7 +350,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
     },
     logoutAccount: async ({ cfg, accountId }) => {
       const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
-      const result = await probeOpenzaloAuth({ account, timeoutMs: 5_000 });
+      const result = await probeOpenzaloAuth({ account, timeoutMs: 5_000, forceRefresh: true });
       if (!result.ok) {
         return { cleared: false, loggedOut: true };
       }

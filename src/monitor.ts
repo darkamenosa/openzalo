@@ -18,6 +18,90 @@ type OpenzaloDebounceEntry = {
 };
 
 const DEFAULT_INBOUND_DEBOUNCE_MS = 1200;
+const OPENZALO_READY_TIMEOUT_MS = 30_000;
+const OPENZALO_READY_POLL_MS = 500;
+const OPENZALO_READY_LOG_AFTER_MS = 10_000;
+const OPENZALO_READY_LOG_INTERVAL_MS = 10_000;
+
+function toErrorText(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return typeof error === "string" ? error : String(error);
+}
+
+async function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0) {
+    return;
+  }
+  if (signal.aborted) {
+    throw new Error("aborted");
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("aborted"));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function waitForOpenzcaReady(options: {
+  account: ResolvedOpenzaloAccount;
+  runtime: RuntimeEnv;
+  abortSignal: AbortSignal;
+}): Promise<boolean> {
+  const { account, runtime, abortSignal } = options;
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + OPENZALO_READY_TIMEOUT_MS;
+  let nextLogAt = startedAt + OPENZALO_READY_LOG_AFTER_MS;
+  let lastError = "unknown error";
+
+  while (!abortSignal.aborted) {
+    try {
+      await runOpenzcaCommand({
+        binary: account.zcaBinary,
+        profile: account.profile,
+        args: ["auth", "status"],
+        timeoutMs: 8_000,
+        signal: abortSignal,
+      });
+      return true;
+    } catch (error) {
+      if (abortSignal.aborted) {
+        return false;
+      }
+      lastError = toErrorText(error);
+    }
+
+    const now = Date.now();
+    if (now >= deadlineAt) {
+      break;
+    }
+    if (now >= nextLogAt) {
+      runtime.error?.(
+        `[${account.accountId}] openzca not ready after ${now - startedAt}ms (${lastError})`,
+      );
+      nextLogAt = now + OPENZALO_READY_LOG_INTERVAL_MS;
+    }
+    try {
+      await sleepWithAbort(OPENZALO_READY_POLL_MS, abortSignal);
+    } catch {
+      return false;
+    }
+  }
+
+  if (abortSignal.aborted) {
+    return false;
+  }
+  throw new Error(`openzca not ready after ${OPENZALO_READY_TIMEOUT_MS}ms (${lastError})`);
+}
 
 function dedupeStrings(values: readonly string[]): string[] {
   const out: string[] = [];
@@ -137,6 +221,15 @@ export async function monitorOpenzaloProvider(options: OpenzaloMonitorOptions): 
   runtime.log?.(
     `[${account.accountId}] starting openzca listener (profile=${account.profile}, binary=${account.zcaBinary})`,
   );
+
+  const ready = await waitForOpenzcaReady({
+    account,
+    runtime,
+    abortSignal,
+  });
+  if (!ready) {
+    return;
+  }
 
   let selfId: string | undefined;
   try {
