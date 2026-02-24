@@ -258,13 +258,8 @@ async function deliverOpenzaloReply(params: {
 
   if (mediaList.length > 0) {
     let first = true;
-    const mediaSequenceByKey = new Map<string, number>();
     for (const mediaUrl of mediaList) {
       const caption = first ? text : undefined;
-      const sequence = nextOpenzaloOutboundSequence(
-        mediaSequenceByKey,
-        `${caption ?? ""}\u001f${mediaUrl}`,
-      );
       const dedupe = acquireOpenzaloOutboundDedupeSlot({
         accountId: account.accountId,
         sessionKey,
@@ -272,7 +267,6 @@ async function deliverOpenzaloReply(params: {
         kind: "media",
         text: caption,
         mediaRef: mediaUrl,
-        sequence,
       });
       if (!dedupe.acquired) {
         runtime.log?.(
