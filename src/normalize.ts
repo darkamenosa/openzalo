@@ -1,7 +1,7 @@
 export function stripOpenzaloPrefix(value: string): string {
   return value
     .trim()
-    .replace(/^(openzalo|zlu):/i, "")
+    .replace(/^(openzalo|ozl|zlu):/i, "")
     .trim();
 }
 

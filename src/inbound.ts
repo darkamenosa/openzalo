@@ -20,6 +20,7 @@ import {
   rememberOpenzaloMessage,
   resolveOpenzaloMessageRef,
 } from "./message-refs.js";
+import { resolveOpenzaloBoundSessionByTarget } from "./subagent-bindings.js";
 import {
   formatOpenzaloOutboundTarget,
   normalizeOpenzaloAllowEntry,
@@ -67,6 +68,15 @@ function nextOpenzaloOutboundSequence(map: Map<string, number>, key: string): nu
   const next = (map.get(key) ?? 0) + 1;
   map.set(key, next);
   return next;
+}
+
+function resolveAgentIdFromSessionKey(sessionKey: string): string | null {
+  const match = sessionKey.trim().match(/^agent:([^:]+):/i);
+  const agentId = match?.[1]?.trim();
+  if (!agentId) {
+    return null;
+  }
+  return agentId;
 }
 
 function resolveOpenzaloPendingGroupHistoryLimit(params: {
@@ -369,6 +379,11 @@ export async function handleOpenzaloInbound(params: {
         toId: message.toId,
         threadId: message.threadId,
       }) || message.senderId;
+  const targetThreadId = message.isGroup ? message.threadId : directPeerId;
+  const outboundTarget = formatOpenzaloOutboundTarget({
+    threadId: targetThreadId,
+    isGroup: message.isGroup,
+  });
 
   const rawBody = message.text.trim();
   const hasMedia = message.mediaUrls.length > 0 || message.mediaPaths.length > 0;
@@ -478,15 +493,30 @@ export async function handleOpenzaloInbound(params: {
     }
   }
 
-  const route = core.channel.routing.resolveAgentRoute({
+  const defaultRoute = core.channel.routing.resolveAgentRoute({
     cfg: cfg as OpenClawConfig,
     channel: CHANNEL_ID,
     accountId: account.accountId,
     peer: {
       kind: message.isGroup ? "group" : "direct",
-      id: message.isGroup ? message.threadId : directPeerId,
+      id: targetThreadId,
     },
   });
+  const boundSession = resolveOpenzaloBoundSessionByTarget({
+    accountId: account.accountId,
+    to: outboundTarget,
+  });
+  const boundAgentId = boundSession
+    ? resolveAgentIdFromSessionKey(boundSession.childSessionKey) ?? boundSession.agentId
+    : null;
+  const route = boundSession && boundAgentId
+    ? {
+        ...defaultRoute,
+        agentId: boundAgentId,
+        sessionKey: boundSession.childSessionKey,
+        mainSessionKey: `agent:${boundAgentId}:main`,
+      }
+    : defaultRoute;
   const mentionRegexes = core.channel.mentions.buildMentionRegexes(cfg as OpenClawConfig, route.agentId);
   const commandBody = message.isGroup
     ? resolveOpenzaloCommandBody({
@@ -640,11 +670,6 @@ export async function handleOpenzaloInbound(params: {
     );
   }
 
-  const targetThreadId = message.isGroup ? message.threadId : directPeerId;
-  const outboundTarget = formatOpenzaloOutboundTarget({
-    threadId: targetThreadId,
-    isGroup: message.isGroup,
-  });
   const outboundParsedTarget = parseOpenzaloTarget(outboundTarget);
 
   const mergedMediaPaths = dedupeStrings([

@@ -1,8 +1,11 @@
 import {
+  applyAccountNameToChannelSection,
   buildChannelConfigSchema,
   DEFAULT_ACCOUNT_ID,
   deleteAccountFromConfigSection,
   formatPairingApproveHint,
+  migrateBaseNameToDefaultAccount,
+  normalizeAccountId,
   PAIRING_APPROVED_MESSAGE,
   setAccountEnabledInConfigSection,
   type ChannelPlugin,
@@ -33,7 +36,7 @@ import { getOpenzaloRuntime } from "./runtime.js";
 import { sendMediaOpenzalo, sendTextOpenzalo } from "./send.js";
 import { OpenzaloConfigSchema } from "./config-schema.js";
 import { collectOpenzaloStatusIssues, resolveOpenzaloAccountState } from "./status.js";
-import { runOpenzcaCommand } from "./openzca.js";
+import { runOpenzcaCommand, runOpenzcaInteractive } from "./openzca.js";
 import type { CoreConfig, OpenzaloProbe, ResolvedOpenzaloAccount } from "./types.js";
 
 const meta = {
@@ -45,9 +48,72 @@ const meta = {
   docsLabel: "openzalo",
   blurb: "Personal Zalo account integration via openzca CLI.",
   systemImage: "message",
-  aliases: ["zlu", "zalo-personal"],
+  aliases: ["ozl", "zalo-personal"],
   order: 80,
+  quickstartAllowFrom: true,
 };
+
+function normalizeDirectoryName(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function chooseDirectoryMatch<Row extends { id: string; name?: string }>(params: {
+  query: string;
+  entries: Row[];
+}): { best?: Row; ambiguous: boolean } {
+  const query = params.query.trim().toLowerCase();
+  if (!query) {
+    return { ambiguous: false };
+  }
+  const exactMatches = params.entries.filter(
+    (entry) =>
+      entry.id.toLowerCase() === query || normalizeDirectoryName(entry.name).toLowerCase() === query,
+  );
+  if (exactMatches.length === 1) {
+    return { best: exactMatches[0], ambiguous: false };
+  }
+  if (exactMatches.length > 1) {
+    return { best: exactMatches[0], ambiguous: true };
+  }
+  const partialMatches = params.entries.filter((entry) => {
+    const name = normalizeDirectoryName(entry.name).toLowerCase();
+    return entry.id.toLowerCase().includes(query) || (name ? name.includes(query) : false);
+  });
+  if (partialMatches.length === 1) {
+    return { best: partialMatches[0], ambiguous: false };
+  }
+  if (partialMatches.length > 1) {
+    return { best: partialMatches[0], ambiguous: true };
+  }
+  return { ambiguous: false };
+}
+
+function normalizeResolvedUserTarget(input: string): string {
+  const normalized = normalizeOpenzaloMessagingTarget(input);
+  if (!normalized) {
+    return "";
+  }
+  if (/^group:/i.test(normalized)) {
+    return "";
+  }
+  return normalized.replace(/^(dm|user):/i, "").trim();
+}
+
+function normalizeResolvedGroupTarget(input: string): string {
+  const normalized = normalizeOpenzaloMessagingTarget(input);
+  if (!normalized) {
+    return "";
+  }
+  if (/^group:/i.test(normalized)) {
+    const groupId = normalized.replace(/^group:/i, "").trim();
+    return groupId ? `group:${groupId}` : "";
+  }
+  const groupId = normalized.replace(/^(dm|user):/i, "").trim();
+  if (!groupId) {
+    return "";
+  }
+  return `group:${groupId}`;
+}
 
 export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProbe> = {
   id: "openzalo",
@@ -228,6 +294,172 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
       return await listOpenzaloDirectoryGroups({ account, query, limit });
     },
   },
+  resolver: {
+    resolveTargets: async ({ cfg, accountId, inputs, kind, runtime }) => {
+      const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+      const results = inputs.map((input) => ({
+        input,
+        resolved: false,
+        id: undefined as string | undefined,
+        name: undefined as string | undefined,
+        note: undefined as string | undefined,
+      }));
+      const unresolved: Array<{ query: string; index: number }> = [];
+
+      for (const [index, input] of inputs.entries()) {
+        const trimmed = input.trim();
+        if (!trimmed) {
+          results[index]!.note = "empty input";
+          continue;
+        }
+        if (kind === "user") {
+          const normalized = normalizeResolvedUserTarget(trimmed);
+          if (normalized) {
+            results[index] = {
+              input,
+              resolved: true,
+              id: normalized,
+            };
+            continue;
+          }
+          unresolved.push({ query: trimmed, index });
+          continue;
+        }
+        const normalizedGroup = normalizeResolvedGroupTarget(trimmed);
+        if (normalizedGroup) {
+          results[index] = {
+            input,
+            resolved: true,
+            id: normalizedGroup,
+          };
+          continue;
+        }
+        unresolved.push({ query: trimmed, index });
+      }
+
+      if (unresolved.length === 0) {
+        return results;
+      }
+
+      try {
+        if (kind === "user") {
+          const peers = await listOpenzaloDirectoryPeers({
+            account,
+          });
+          for (const pending of unresolved) {
+            const match = chooseDirectoryMatch({
+              query: pending.query,
+              entries: peers.map((entry) => ({ id: entry.id, name: entry.name })),
+            });
+            if (!match.best) {
+              results[pending.index]!.note = "no user match";
+              continue;
+            }
+            results[pending.index] = {
+              input: results[pending.index]!.input,
+              resolved: true,
+              id: match.best.id,
+              name: match.best.name,
+              ...(match.ambiguous ? { note: "multiple matches; chose first" } : {}),
+            };
+          }
+          return results;
+        }
+
+        const groups = await listOpenzaloDirectoryGroups({
+          account,
+        });
+        for (const pending of unresolved) {
+          const match = chooseDirectoryMatch({
+            query: pending.query,
+            entries: groups.map((entry) => ({ id: entry.id, name: entry.name })),
+          });
+          if (!match.best) {
+            results[pending.index]!.note = "no group match";
+            continue;
+          }
+          results[pending.index] = {
+            input: results[pending.index]!.input,
+            resolved: true,
+            id: `group:${match.best.id}`,
+            name: match.best.name,
+            ...(match.ambiguous ? { note: "multiple matches; chose first" } : {}),
+          };
+        }
+        return results;
+      } catch (err) {
+        runtime.error?.(`openzalo resolve failed: ${String(err)}`);
+        for (const pending of unresolved) {
+          results[pending.index]!.note = "lookup failed";
+        }
+        return results;
+      }
+    },
+  },
+  setup: {
+    resolveAccountId: ({ accountId }) => normalizeAccountId(accountId),
+    applyAccountName: ({ cfg, accountId, name }) =>
+      applyAccountNameToChannelSection({
+        cfg: cfg as CoreConfig,
+        channelKey: "openzalo",
+        accountId,
+        name,
+      }),
+    validateInput: () => null,
+    applyAccountConfig: ({ cfg, accountId, input }) => {
+      const namedConfig = applyAccountNameToChannelSection({
+        cfg: cfg as CoreConfig,
+        channelKey: "openzalo",
+        accountId,
+        name: input.name,
+      }) as CoreConfig;
+      const next =
+        accountId !== DEFAULT_ACCOUNT_ID
+          ? (migrateBaseNameToDefaultAccount({
+              cfg: namedConfig,
+              channelKey: "openzalo",
+            }) as CoreConfig)
+          : namedConfig;
+      const binaryPath = input.cliPath?.trim();
+
+      if (accountId === DEFAULT_ACCOUNT_ID) {
+        const existingProfile = next.channels?.openzalo?.profile?.trim();
+        return {
+          ...next,
+          channels: {
+            ...next.channels,
+            openzalo: {
+              ...next.channels?.openzalo,
+              enabled: true,
+              profile: existingProfile || accountId,
+              ...(binaryPath ? { zcaBinary: binaryPath } : {}),
+            },
+          },
+        };
+      }
+
+      const existingAccountProfile = next.channels?.openzalo?.accounts?.[accountId]?.profile?.trim();
+      return {
+        ...next,
+        channels: {
+          ...next.channels,
+          openzalo: {
+            ...next.channels?.openzalo,
+            enabled: true,
+            accounts: {
+              ...next.channels?.openzalo?.accounts,
+              [accountId]: {
+                ...next.channels?.openzalo?.accounts?.[accountId],
+                enabled: true,
+                profile: existingAccountProfile || accountId,
+                ...(binaryPath ? { zcaBinary: binaryPath } : {}),
+              },
+            },
+          },
+        },
+      };
+    },
+  },
   outbound: {
     deliveryMode: "direct",
     chunker: (text, limit) => getOpenzaloRuntime().channel.text.chunkMarkdownText(text, limit),
@@ -286,9 +518,12 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
     },
   },
   auth: {
-    login: async ({ cfg, accountId }) => {
+    login: async ({ cfg, accountId, runtime }) => {
       const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
-      await runOpenzcaCommand({
+      runtime.log(
+        `Complete OpenZalo login in this terminal (account: ${account.accountId}, profile: ${account.profile}).`,
+      );
+      await runOpenzcaInteractive({
         binary: account.zcaBinary,
         profile: account.profile,
         args: ["auth", "login"],

@@ -25,11 +25,12 @@
       "docsLabel": "openzalo",
       "blurb": "Personal Zalo account integration via openzca CLI.",
       "aliases": [
-        "zlu",
+        "ozl",
         "zalo-personal"
       ],
       "systemImage": "message",
-      "order": 80
+      "order": 80,
+      "quickstartAllowFrom": true
     },
     "install": {
       "npmSpec": "@openclaw/openzalo",

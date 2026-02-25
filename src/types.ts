@@ -28,6 +28,12 @@ export type OpenzaloActionConfig = {
   memberInfo?: boolean;
 };
 
+export type OpenzaloThreadBindingsConfig = {
+  enabled?: boolean;
+  spawnSubagentSessions?: boolean;
+  ttlHours?: number;
+};
+
 export type OpenzaloAccountConfig = {
   name?: string;
   enabled?: boolean;
@@ -49,10 +55,12 @@ export type OpenzaloAccountConfig = {
   mediaMaxMb?: number;
   mediaLocalRoots?: string[];
   sendTypingIndicators?: boolean;
+  threadBindings?: OpenzaloThreadBindingsConfig;
   actions?: OpenzaloActionConfig;
 };
 
 export type OpenzaloConfig = OpenzaloAccountConfig & {
+  defaultAccount?: string;
   accounts?: Record<string, OpenzaloAccountConfig>;
 };
 

@@ -168,6 +168,55 @@ export async function runOpenzcaCommand(options: OpenzcaRunOptions): Promise<Ope
   });
 }
 
+export async function runOpenzcaInteractive(
+  options: Omit<OpenzcaRunOptions, "timeoutMs" | "signal">,
+): Promise<OpenzcaRunResult> {
+  const binary = options.binary?.trim() || "openzca";
+  const args = ["--profile", options.profile, ...options.args];
+
+  return await new Promise<OpenzcaRunResult>((resolve, reject) => {
+    const child = spawn(binary, args, {
+      cwd: options.cwd,
+      env: { ...process.env, ...options.env },
+      stdio: ["inherit", "inherit", "pipe"],
+      shell: false,
+    });
+
+    let stderr = "";
+
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      stderr += String(chunk);
+      // Keep stderr visible in interactive mode while still capturing for errors.
+      process.stderr.write(chunk);
+    });
+
+    child.on("error", (err) => {
+      reject(err);
+    });
+
+    child.on("close", (code) => {
+      const exitCode = code ?? 0;
+      if (exitCode !== 0) {
+        reject(
+          makeExecError({
+            binary,
+            args,
+            exitCode,
+            stderr,
+            stdout: "",
+          }),
+        );
+        return;
+      }
+      resolve({
+        stdout: "",
+        stderr,
+        exitCode,
+      });
+    });
+  });
+}
+
 export async function runOpenzcaJson<T = unknown>(options: OpenzcaRunOptions): Promise<T> {
   const result = await runOpenzcaCommand(options);
   return parseJsonOutput(result.stdout) as T;

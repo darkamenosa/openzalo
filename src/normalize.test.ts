@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatOpenzaloOutboundTarget, resolveOpenzaloDirectPeerId } from "./normalize.ts";
+import {
+  formatOpenzaloOutboundTarget,
+  normalizeOpenzaloMessagingTarget,
+  resolveOpenzaloDirectPeerId,
+} from "./normalize.ts";
 
 test("resolveOpenzaloDirectPeerId prefers sender when dmPeerId is group alias", () => {
   const resolved = resolveOpenzaloDirectPeerId({
@@ -42,4 +46,9 @@ test("formatOpenzaloOutboundTarget uses explicit user/group prefixes", () => {
 
   assert.equal(direct, "user:20002");
   assert.equal(group, "group:30003");
+});
+
+test("normalizeOpenzaloMessagingTarget accepts ozl prefix", () => {
+  const normalized = normalizeOpenzaloMessagingTarget("ozl:group:888");
+  assert.equal(normalized, "group:888");
 });

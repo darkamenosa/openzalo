@@ -73,6 +73,12 @@ openclaw channels login --channel openzalo --account work
 }
 ```
 
+Or via CLI:
+
+```bash
+openclaw channels add --channel openzalo --account default
+```
+
 3. Send test message:
 
 ```bash
@@ -130,6 +136,12 @@ openclaw message send --channel openzalo --target group:<groupId> --message "Hel
       ],
       sendTypingIndicators: true,
 
+      threadBindings: {
+        enabled: true,
+        spawnSubagentSessions: true,
+        ttlHours: 24,
+      },
+
       actions: {
         reactions: true,
         messages: true, // read/edit/unsend
@@ -150,6 +162,7 @@ openclaw message send --channel openzalo --target group:<groupId> --message "Hel
 channels:
   openzalo:
     enabled: true
+    defaultAccount: default
     accounts:
       default:
         profile: default
@@ -170,7 +183,8 @@ Profile resolution is per account. If `zcaBinary` is not set, plugin uses:
 - Group target: `group:<groupId>`
 - Also accepted for groups: `g-<groupId>`, `g:<groupId>`
 - Also accepted for DM/user targets: `user:<userId>`, `dm:<userId>`, `u:<userId>`, `u-<userId>`
-- Channel prefixes like `openzalo:<target>` and `zlu:<target>` are normalized automatically.
+- Channel prefixes like `openzalo:<target>` and `ozl:<target>` are normalized automatically.
+- Legacy `zlu:<target>` remains accepted for backward compatibility.
 
 Use `group:` for explicit group sends.
 
@@ -180,6 +194,7 @@ Use `group:` for explicit group sends.
 - Group messages require mention by default (`requireMention: true`) unless overridden.
 - Authorized slash/bang control commands can still be processed in groups when access policy allows.
 - Pairing mode sends approval code for unknown DM senders.
+- Subagent session binding controls use `channels.openzalo.threadBindings.*` (or per-account overrides).
 - Local media is restricted to allowed roots for safety.
 
 Default safe media roots (under `OPENCLAW_STATE_DIR` or `CLAWDBOT_STATE_DIR`, fallback `~/.openclaw`):

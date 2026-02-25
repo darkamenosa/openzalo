@@ -3,6 +3,14 @@ import { z } from "zod";
 
 const allowFromEntry = z.union([z.string(), z.number()]);
 
+const openzaloThreadBindingsSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    spawnSubagentSessions: z.boolean().optional(),
+    ttlHours: z.number().nonnegative().optional(),
+  })
+  .optional();
+
 const openzaloActionSchema = z
   .object({
     reactions: z.boolean().default(true),
@@ -42,9 +50,11 @@ const openzaloAccountSchema = z.object({
   mediaMaxMb: z.number().int().positive().optional(),
   mediaLocalRoots: z.array(z.string()).optional(),
   sendTypingIndicators: z.boolean().optional(),
+  threadBindings: openzaloThreadBindingsSchema,
   actions: openzaloActionSchema,
 });
 
 export const OpenzaloConfigSchema = openzaloAccountSchema.extend({
   accounts: z.object({}).catchall(openzaloAccountSchema).optional(),
+  defaultAccount: z.string().optional(),
 });

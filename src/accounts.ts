@@ -18,6 +18,10 @@ export function listOpenzaloAccountIds(cfg: CoreConfig): string[] {
 }
 
 export function resolveDefaultOpenzaloAccountId(cfg: CoreConfig): string {
+  const configuredDefault = cfg.channels?.openzalo?.defaultAccount?.trim();
+  if (configuredDefault) {
+    return configuredDefault;
+  }
   const ids = listOpenzaloAccountIds(cfg);
   if (ids.includes(DEFAULT_ACCOUNT_ID)) {
     return DEFAULT_ACCOUNT_ID;
@@ -82,6 +86,9 @@ function hasExplicitAccountConfig(config: OpenzaloAccountConfig | undefined): bo
   if (typeof config.sendTypingIndicators === "boolean") {
     return true;
   }
+  if (config.threadBindings && Object.keys(config.threadBindings).length > 0) {
+    return true;
+  }
   if (config.actions && Object.keys(config.actions).length > 0) {
     return true;
   }
@@ -93,9 +100,10 @@ function hasExplicitAccountConfig(config: OpenzaloAccountConfig | undefined): bo
 
 function mergeOpenzaloAccountConfig(cfg: CoreConfig, accountId: string): OpenzaloAccountConfig {
   const base = (cfg.channels?.openzalo ?? {}) as OpenzaloAccountConfig & {
+    defaultAccount?: string;
     accounts?: unknown;
   };
-  const { accounts: _ignored, ...rest } = base;
+  const { accounts: _ignored, defaultAccount: _ignoredDefaultAccount, ...rest } = base;
   const account = resolveAccountConfig(cfg, accountId) ?? {};
   return { ...rest, ...account };
 }
@@ -107,9 +115,11 @@ export function resolveOpenzaloAccount(params: {
   const accountId = normalizeAccountId(params.accountId);
   const baseEnabled = params.cfg.channels?.openzalo?.enabled;
   const baseConfig = (params.cfg.channels?.openzalo ?? {}) as OpenzaloAccountConfig & {
+    defaultAccount?: string;
     accounts?: unknown;
   };
-  const { accounts: _ignored, ...topLevelConfig } = baseConfig;
+  const { accounts: _ignored, defaultAccount: _ignoredDefaultAccount, ...topLevelConfig } =
+    baseConfig;
   const accountConfig = resolveAccountConfig(params.cfg, accountId);
   const merged = mergeOpenzaloAccountConfig(params.cfg, accountId);
   const accountEnabled = merged.enabled !== false;
