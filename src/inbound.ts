@@ -1,5 +1,4 @@
 import {
-  createTypingCallbacks,
   createReplyPrefixOptions,
   logInboundDrop,
   resolveControlCommandGate,
@@ -774,29 +773,26 @@ export async function handleOpenzaloInbound(params: {
     channel: CHANNEL_ID,
     accountId: account.accountId,
   });
-  const typingCallbacks =
+  const onReplyStartTyping =
     account.config.sendTypingIndicators === false
-      ? null
-      : createTypingCallbacks({
-          start: async () => {
+      ? undefined
+      : async () => {
+          try {
             await sendTypingOpenzalo({
               account,
               to: outboundTarget,
             });
-          },
-          onStartError: (err) => {
+          } catch (err) {
             runtime.error?.(`openzalo typing start failed: ${String(err)}`);
-          },
-        });
+          }
+        };
 
   const dispatchResult = await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: cfg as OpenClawConfig,
     dispatcherOptions: {
       ...prefixOptions,
-      onReplyStart: typingCallbacks?.onReplyStart,
-      onIdle: typingCallbacks?.onIdle,
-      onCleanup: typingCallbacks?.onCleanup,
+      onReplyStart: onReplyStartTyping,
       deliver: async (payload) => {
         const receipts = await deliverOpenzaloReply({
           payload,

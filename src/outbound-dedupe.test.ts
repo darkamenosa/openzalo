@@ -229,3 +229,143 @@ test("does not collide on long chunks with the same prefix", () => {
   );
   assert.equal(second.acquired, true);
 });
+
+test("keeps media occurrence signatures stable across retries", () => {
+  resetOpenzaloOutboundDedupeForTests();
+
+  const firstOccurrence = acquireOpenzaloOutboundDedupeSlot(
+    {
+      accountId: "main",
+      sessionKey: "s1",
+      target: "user:123",
+      kind: "media",
+      text: "caption",
+      mediaRef: "https://example.com/a.jpg",
+      sequence: 1,
+      idempotencyContext: "ctx:media",
+    },
+    5_500,
+  );
+  assert.equal(firstOccurrence.acquired, true);
+  if (!firstOccurrence.acquired) {
+    return;
+  }
+  releaseOpenzaloOutboundDedupeSlot({
+    ticket: firstOccurrence.ticket,
+    sent: true,
+    nowMs: 5_501,
+  });
+
+  const secondOccurrence = acquireOpenzaloOutboundDedupeSlot(
+    {
+      accountId: "main",
+      sessionKey: "s1",
+      target: "user:123",
+      kind: "media",
+      text: undefined,
+      mediaRef: "https://example.com/a.jpg",
+      sequence: 2,
+      idempotencyContext: "ctx:media",
+    },
+    5_502,
+  );
+  assert.equal(secondOccurrence.acquired, true);
+  if (!secondOccurrence.acquired) {
+    return;
+  }
+  releaseOpenzaloOutboundDedupeSlot({
+    ticket: secondOccurrence.ticket,
+    sent: true,
+    nowMs: 5_503,
+  });
+
+  const duplicateFirstOccurrence = acquireOpenzaloOutboundDedupeSlot(
+    {
+      accountId: "main",
+      sessionKey: "s1",
+      target: "user:123",
+      kind: "media",
+      text: "caption",
+      mediaRef: "https://example.com/a.jpg",
+      sequence: 1,
+      idempotencyContext: "ctx:media",
+    },
+    5_504,
+  );
+  assert.equal(duplicateFirstOccurrence.acquired, false);
+  if (!duplicateFirstOccurrence.acquired) {
+    assert.equal(duplicateFirstOccurrence.reason, "recent");
+  }
+
+  const duplicateSecondOccurrence = acquireOpenzaloOutboundDedupeSlot(
+    {
+      accountId: "main",
+      sessionKey: "s1",
+      target: "user:123",
+      kind: "media",
+      text: undefined,
+      mediaRef: "https://example.com/a.jpg",
+      sequence: 2,
+      idempotencyContext: "ctx:media",
+    },
+    5_505,
+  );
+  assert.equal(duplicateSecondOccurrence.acquired, false);
+  if (!duplicateSecondOccurrence.acquired) {
+    assert.equal(duplicateSecondOccurrence.reason, "recent");
+  }
+});
+
+test("scopes dedupe by idempotency context", () => {
+  resetOpenzaloOutboundDedupeForTests();
+
+  const first = acquireOpenzaloOutboundDedupeSlot(
+    {
+      accountId: "main",
+      sessionKey: "s1",
+      target: "user:123",
+      kind: "text",
+      text: "same body",
+      idempotencyContext: "ctx:1",
+    },
+    6_000,
+  );
+  assert.equal(first.acquired, true);
+  if (!first.acquired) {
+    return;
+  }
+  releaseOpenzaloOutboundDedupeSlot({
+    ticket: first.ticket,
+    sent: true,
+    nowMs: 6_010,
+  });
+
+  const duplicateSameContext = acquireOpenzaloOutboundDedupeSlot(
+    {
+      accountId: "main",
+      sessionKey: "s1",
+      target: "user:123",
+      kind: "text",
+      text: "same body",
+      idempotencyContext: "ctx:1",
+    },
+    6_020,
+  );
+  assert.equal(duplicateSameContext.acquired, false);
+  if (!duplicateSameContext.acquired) {
+    assert.equal(duplicateSameContext.reason, "recent");
+  }
+
+  const samePayloadDifferentContext = acquireOpenzaloOutboundDedupeSlot(
+    {
+      accountId: "main",
+      sessionKey: "s1",
+      target: "user:123",
+      kind: "text",
+      text: "same body",
+      idempotencyContext: "ctx:2",
+    },
+    6_021,
+  );
+  assert.equal(samePayloadDifferentContext.acquired, true);
+});

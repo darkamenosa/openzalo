@@ -41,10 +41,12 @@ function buildSignature(params: {
   text?: string;
   mediaRef?: string;
   sequence?: number;
+  idempotencyContext?: string;
 }): string {
   const accountId = normalizeIdentity(params.accountId);
   const sessionKey = normalizeIdentity(params.sessionKey) || "-";
   const target = normalizeIdentity(params.target);
+  const idempotencyContext = normalizeIdentity(params.idempotencyContext) || "-";
   const sequence =
     Number.isFinite(params.sequence) && typeof params.sequence === "number"
       ? String(Math.max(1, Math.floor(params.sequence)))
@@ -58,6 +60,8 @@ function buildSignature(params: {
   hash.update(target, "utf8");
   hash.update("\u001f", "utf8");
   hash.update(params.kind, "utf8");
+  hash.update("\u001f", "utf8");
+  hash.update(idempotencyContext, "utf8");
   hash.update("\u001f", "utf8");
   hash.update(sequence, "utf8");
   hash.update("\u001f", "utf8");
@@ -103,6 +107,7 @@ export function acquireOpenzaloOutboundDedupeSlot(
     text?: string;
     mediaRef?: string;
     sequence?: number;
+    idempotencyContext?: string;
   },
   nowMs = Date.now(),
 ): AcquireOpenzaloOutboundDedupeResult {
