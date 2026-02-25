@@ -1,11 +1,7 @@
+import { normalizeOpenzaloId } from "./normalize.js";
 import type { OpenzaloInboundMessage, OpenzcaRawPayload } from "./types.js";
 
-function toId(value: unknown): string {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(Math.trunc(value));
-  }
-  return typeof value === "string" ? value.trim() : "";
-}
+const toId = normalizeOpenzaloId;
 
 function toStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {
@@ -285,13 +281,14 @@ export function normalizeOpenzcaInboundPayload(
   }
   const toIdValue = toId(payload.toId) || toId(metadata?.toId);
 
-  const chatType =
-    typeof payload.chatType === "string"
-      ? payload.chatType
-      : typeof metadata?.chatType === "string"
-        ? metadata.chatType
-        : "";
-  const isGroup = toBoolean(metadata?.isGroup) ?? chatType.toLowerCase() === "group";
+  let chatType = "";
+  if (typeof payload.chatType === "string") {
+    chatType = payload.chatType;
+  } else if (typeof metadata?.chatType === "string") {
+    chatType = metadata.chatType;
+  }
+  const metadataIsGroup = toBoolean(metadata?.isGroup);
+  const isGroup = metadataIsGroup !== undefined ? metadataIsGroup : chatType.toLowerCase() === "group";
 
   const mediaPaths = [
     ...toStringArray(payload.mediaPaths),

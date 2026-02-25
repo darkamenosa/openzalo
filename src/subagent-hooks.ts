@@ -1,7 +1,7 @@
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
-import type { FileLockOptions, OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { withFileLock, writeJsonFileAtomically } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { resolveOpenzaloAccount } from "./accounts.js";
 import {
   bindOpenzaloSubagentSession,
@@ -15,6 +15,17 @@ import type { CoreConfig } from "./types.js";
 
 const DEFAULT_THREAD_BINDING_TTL_HOURS = 24;
 const BINDINGS_STORE_VERSION = 1;
+
+type FileLockOptions = {
+  retries: {
+    retries: number;
+    factor: number;
+    minTimeout: number;
+    maxTimeout: number;
+    randomize?: boolean;
+  };
+  stale: number;
+};
 
 const STORE_LOCK_OPTIONS: FileLockOptions = {
   retries: {
@@ -31,6 +42,100 @@ type PersistedOpenzaloSubagentBindings = {
   version: number;
   bindings: OpenzaloSubagentBindingRecord[];
 };
+
+function computeLockDelayMs(retries: FileLockOptions["retries"], attempt: number): number {
+  const base = Math.min(
+    retries.maxTimeout,
+    Math.max(retries.minTimeout, retries.minTimeout * retries.factor ** attempt),
+  );
+  const jitter = retries.randomize ? 1 + Math.random() : 1;
+  return Math.min(retries.maxTimeout, Math.round(base * jitter));
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function isStaleLock(lockPath: string, staleMs: number): Promise<boolean> {
+  try {
+    const raw = await fsp.readFile(lockPath, "utf8");
+    const parsed = JSON.parse(raw) as { createdAt?: string };
+    if (parsed.createdAt) {
+      const createdAt = Date.parse(parsed.createdAt);
+      if (!Number.isFinite(createdAt) || Date.now() - createdAt > staleMs) {
+        return true;
+      }
+    }
+  } catch {
+    // Fall back to mtime check below.
+  }
+  try {
+    const stat = await fsp.stat(lockPath);
+    return Date.now() - stat.mtimeMs > staleMs;
+  } catch {
+    return true;
+  }
+}
+
+async function withStoreFileLock<T>(
+  filePath: string,
+  options: FileLockOptions,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const normalizedPath = path.resolve(filePath);
+  const lockPath = `${normalizedPath}.lock`;
+  await fsp.mkdir(path.dirname(normalizedPath), { recursive: true });
+  const attempts = Math.max(1, options.retries.retries + 1);
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    let handle: fsp.FileHandle | null = null;
+    try {
+      handle = await fsp.open(lockPath, "wx");
+      await handle.writeFile(
+        JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }, null, 2),
+        "utf8",
+      );
+      try {
+        return await fn();
+      } finally {
+        await handle.close().catch(() => undefined);
+        await fsp.rm(lockPath, { force: true }).catch(() => undefined);
+      }
+    } catch (err) {
+      if (handle) {
+        await handle.close().catch(() => undefined);
+      }
+      const code = (err as { code?: string }).code;
+      if (code !== "EEXIST") {
+        throw err;
+      }
+      if (await isStaleLock(lockPath, options.stale)) {
+        await fsp.rm(lockPath, { force: true }).catch(() => undefined);
+        continue;
+      }
+      if (attempt >= attempts - 1) {
+        break;
+      }
+      await sleep(computeLockDelayMs(options.retries, attempt));
+    }
+  }
+
+  throw new Error(`file lock timeout for ${normalizedPath}`);
+}
+
+async function writeJsonFileAtomically(filePath: string, payload: unknown): Promise<void> {
+  const normalizedPath = path.resolve(filePath);
+  await fsp.mkdir(path.dirname(normalizedPath), { recursive: true });
+  const tmpPath =
+    `${normalizedPath}.${process.pid}.${Date.now()}.` +
+    `${Math.random().toString(16).slice(2)}.tmp`;
+  try {
+    await fsp.writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    await fsp.rename(tmpPath, normalizedPath);
+  } finally {
+    await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
+  }
+}
 
 function summarizeError(err: unknown): string {
   if (err instanceof Error) {
@@ -79,7 +184,7 @@ function loadBindingsFromDiskSync(api: OpenClawPluginApi, storePath: string): vo
 async function persistBindingsToDisk(api: OpenClawPluginApi, storePath: string): Promise<void> {
   const logger = api.runtime.logging.getChildLogger({ plugin: "openzalo", scope: "subagent-hooks" });
   try {
-    await withFileLock(storePath, STORE_LOCK_OPTIONS, async () => {
+    await withStoreFileLock(storePath, STORE_LOCK_OPTIONS, async () => {
       const payload: PersistedOpenzaloSubagentBindings = {
         version: BINDINGS_STORE_VERSION,
         bindings: snapshotOpenzaloSubagentBindings(),
@@ -94,6 +199,12 @@ async function persistBindingsToDisk(api: OpenClawPluginApi, storePath: string):
 export function registerOpenzaloSubagentHooks(api: OpenClawPluginApi) {
   const storePath = resolveBindingsStorePath(api);
   loadBindingsFromDiskSync(api, storePath);
+  let persistQueue: Promise<void> = Promise.resolve();
+  const persistBindings = async () => {
+    // Serialize writes so each persist observes a stable in-memory snapshot.
+    persistQueue = persistQueue.catch(() => undefined).then(() => persistBindingsToDisk(api, storePath));
+    await persistQueue;
+  };
 
   const resolveThreadBindingFlags = (accountId?: string) => {
     const cfg = api.config as CoreConfig;
@@ -121,7 +232,7 @@ export function registerOpenzaloSubagentHooks(api: OpenClawPluginApi) {
       spawnSubagentSessions:
         accountThreadBindings?.spawnSubagentSessions ??
         baseThreadBindings?.spawnSubagentSessions ??
-        false,
+        true,
       ttlHours,
     };
   };
@@ -175,7 +286,7 @@ export function registerOpenzaloSubagentHooks(api: OpenClawPluginApi) {
             "Unable to bind this OpenZalo conversation for thread=true (invalid requester target context).",
         };
       }
-      await persistBindingsToDisk(api, storePath);
+      await persistBindings();
       return { status: "ok" as const, threadBindingReady: true };
     } catch (err) {
       return {
@@ -194,7 +305,7 @@ export function registerOpenzaloSubagentHooks(api: OpenClawPluginApi) {
       accountId: event.accountId,
     });
     if (removed.length > 0) {
-      await persistBindingsToDisk(api, storePath);
+      await persistBindings();
     }
   });
 

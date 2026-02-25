@@ -5,6 +5,13 @@ export function stripOpenzaloPrefix(value: string): string {
     .trim();
 }
 
+export function normalizeOpenzaloId(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(Math.trunc(value));
+  }
+  return typeof value === "string" ? value.trim() : "";
+}
+
 export function normalizeOpenzaloAllowEntry(raw: string): string {
   return stripOpenzaloPrefix(raw).toLowerCase();
 }

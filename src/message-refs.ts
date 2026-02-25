@@ -1,3 +1,6 @@
+import { parseJsonOutput } from "./json-output.js";
+import { normalizeOpenzaloId } from "./normalize.js";
+
 type OpenzaloMessageRef = {
   msgId?: string;
   cliMsgId?: string;
@@ -24,15 +27,7 @@ const cacheByShortId = new Map<string, string>();
 const latestByThread = new Map<string, string>();
 let shortIdCounter = 0;
 
-function normalizeId(value: unknown): string {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(Math.trunc(value));
-  }
-  if (typeof value === "string") {
-    return value.trim();
-  }
-  return "";
-}
+const normalizeId = normalizeOpenzaloId;
 
 function makeScopedId(accountId: string, id: string): string {
   return `${accountId}:${id}`;
@@ -40,30 +35,6 @@ function makeScopedId(accountId: string, id: string): string {
 
 function makeThreadKey(params: { accountId: string; threadId: string; isGroup: boolean }): string {
   return `${params.accountId}:${params.isGroup ? "group" : "dm"}:${params.threadId}`;
-}
-
-function parseJsonOutput(text: string): unknown {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return null;
-  }
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const lines = trimmed
-      .split(/\r?\n/g)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .reverse();
-    for (const line of lines) {
-      try {
-        return JSON.parse(line);
-      } catch {
-        continue;
-      }
-    }
-    return null;
-  }
 }
 
 function pickRefsFromRecord(value: Record<string, unknown>): OpenzaloMessageRef {

@@ -37,6 +37,7 @@ import { sendMediaOpenzalo, sendTextOpenzalo } from "./send.js";
 import { OpenzaloConfigSchema } from "./config-schema.js";
 import { collectOpenzaloStatusIssues, resolveOpenzaloAccountState } from "./status.js";
 import { runOpenzcaCommand, runOpenzcaInteractive } from "./openzca.js";
+import { normalizeResolvedGroupTarget, normalizeResolvedUserTarget } from "./resolver-target.js";
 import type { CoreConfig, OpenzaloProbe, ResolvedOpenzaloAccount } from "./types.js";
 
 const meta = {
@@ -48,13 +49,17 @@ const meta = {
   docsLabel: "openzalo",
   blurb: "Personal Zalo account integration via openzca CLI.",
   systemImage: "message",
-  aliases: ["ozl", "zalo-personal"],
+  aliases: ["ozl", "zlu", "zalo-personal"],
   order: 80,
   quickstartAllowFrom: true,
 };
 
 function normalizeDirectoryName(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function resolveAccount(cfg: unknown, accountId?: string | null): ResolvedOpenzaloAccount {
+  return resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
 }
 
 function chooseDirectoryMatch<Row extends { id: string; name?: string }>(params: {
@@ -88,33 +93,6 @@ function chooseDirectoryMatch<Row extends { id: string; name?: string }>(params:
   return { ambiguous: false };
 }
 
-function normalizeResolvedUserTarget(input: string): string {
-  const normalized = normalizeOpenzaloMessagingTarget(input);
-  if (!normalized) {
-    return "";
-  }
-  if (/^group:/i.test(normalized)) {
-    return "";
-  }
-  return normalized.replace(/^(dm|user):/i, "").trim();
-}
-
-function normalizeResolvedGroupTarget(input: string): string {
-  const normalized = normalizeOpenzaloMessagingTarget(input);
-  if (!normalized) {
-    return "";
-  }
-  if (/^group:/i.test(normalized)) {
-    const groupId = normalized.replace(/^group:/i, "").trim();
-    return groupId ? `group:${groupId}` : "";
-  }
-  const groupId = normalized.replace(/^(dm|user):/i, "").trim();
-  if (!groupId) {
-    return "";
-  }
-  return `group:${groupId}`;
-}
-
 export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProbe> = {
   id: "openzalo",
   meta,
@@ -132,7 +110,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
     idLabel: "openzaloSenderId",
     normalizeAllowEntry: (entry) => normalizeOpenzaloAllowEntry(entry),
     notifyApproval: async ({ cfg, id, accountId }) => {
-      const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+      const account = resolveAccount(cfg, accountId);
       await sendTextOpenzalo({
         cfg: cfg as CoreConfig,
         account,
@@ -145,7 +123,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
   configSchema: buildChannelConfigSchema(OpenzaloConfigSchema),
   config: {
     listAccountIds: (cfg) => listOpenzaloAccountIds(cfg as CoreConfig),
-    resolveAccount: (cfg, accountId) => resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId }),
+    resolveAccount: (cfg, accountId) => resolveAccount(cfg, accountId),
     defaultAccountId: (cfg) => resolveDefaultOpenzaloAccountId(cfg as CoreConfig),
     setAccountEnabled: ({ cfg, accountId, enabled }) =>
       setAccountEnabledInConfigSection({
@@ -174,9 +152,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
       zcaBinary: account.zcaBinary,
     }),
     resolveAllowFrom: ({ cfg, accountId }) =>
-      (resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId }).config.allowFrom ?? []).map((entry) =>
-        String(entry),
-      ),
+      (resolveAccount(cfg, accountId).config.allowFrom ?? []).map((entry) => String(entry)),
     formatAllowFrom: ({ allowFrom }) =>
       allowFrom
         .map((entry) => normalizeOpenzaloAllowEntry(String(entry)))
@@ -225,7 +201,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
   },
   groups: {
     resolveRequireMention: ({ cfg, accountId, groupId }) => {
-      const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+      const account = resolveAccount(cfg, accountId);
       if (!groupId) {
         return true;
       }
@@ -239,7 +215,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
       });
     },
     resolveToolPolicy: ({ cfg, accountId, groupId, senderId, senderName, senderUsername, senderE164 }) => {
-      const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+      const account = resolveAccount(cfg, accountId);
       if (!groupId) {
         return undefined;
       }
@@ -282,21 +258,21 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
   },
   directory: {
     self: async ({ cfg, accountId }) => {
-      const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+      const account = resolveAccount(cfg, accountId);
       return await listOpenzaloDirectorySelf({ account });
     },
     listPeers: async ({ cfg, accountId, query, limit }) => {
-      const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+      const account = resolveAccount(cfg, accountId);
       return await listOpenzaloDirectoryPeers({ account, query, limit });
     },
     listGroups: async ({ cfg, accountId, query, limit }) => {
-      const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+      const account = resolveAccount(cfg, accountId);
       return await listOpenzaloDirectoryGroups({ account, query, limit });
     },
   },
   resolver: {
     resolveTargets: async ({ cfg, accountId, inputs, kind, runtime }) => {
-      const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+      const account = resolveAccount(cfg, accountId);
       const results = inputs.map((input) => ({
         input,
         resolved: false,
@@ -480,7 +456,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
       }
     },
     sendText: async ({ cfg, to, text, accountId }) => {
-      const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+      const account = resolveAccount(cfg, accountId);
       const result = await sendTextOpenzalo({
         cfg: cfg as CoreConfig,
         account,
@@ -495,7 +471,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
     sendMedia: async (ctx) => {
       const { cfg, to, text, mediaUrl, mediaLocalRoots, accountId } = ctx;
       const { mediaPath } = ctx as { mediaPath?: string };
-      const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+      const account = resolveAccount(cfg, accountId);
       const mergedMediaLocalRoots = Array.from(
         new Set([
           ...(account.config.mediaLocalRoots ?? []),
@@ -519,7 +495,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
   },
   auth: {
     login: async ({ cfg, accountId, runtime }) => {
-      const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+      const account = resolveAccount(cfg, accountId);
       runtime.log(
         `Complete OpenZalo login in this terminal (account: ${account.accountId}, profile: ${account.profile}).`,
       );
@@ -592,7 +568,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
       });
     },
     logoutAccount: async ({ cfg, accountId }) => {
-      const account = resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+      const account = resolveAccount(cfg, accountId);
       const result = await probeOpenzaloAuth({ account, timeoutMs: 5_000, forceRefresh: true });
       if (!result.ok) {
         return { cleared: false, loggedOut: true };

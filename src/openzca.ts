@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { parseJsonOutput } from "./json-output.js";
 import type { ResolvedOpenzaloAccount } from "./types.js";
 
 type OpenzcaRunOptions = {
@@ -47,31 +48,6 @@ function normalizeError(err: unknown): Error {
     return err;
   }
   return new Error(typeof err === "string" ? err : String(err));
-}
-
-function parseJsonOutput(text: string): unknown {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    throw new Error("empty JSON output");
-  }
-
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const lines = trimmed
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .reverse();
-    for (const line of lines) {
-      try {
-        return JSON.parse(line);
-      } catch {
-        continue;
-      }
-    }
-    throw new Error(`failed to parse JSON output: ${trimmed.slice(0, 160)}`);
-  }
 }
 
 export function resolveOpenzcaExec(account: ResolvedOpenzaloAccount): {
@@ -219,7 +195,7 @@ export async function runOpenzcaInteractive(
 
 export async function runOpenzcaJson<T = unknown>(options: OpenzcaRunOptions): Promise<T> {
   const result = await runOpenzcaCommand(options);
-  return parseJsonOutput(result.stdout) as T;
+  return parseJsonOutput(result.stdout, { strict: true }) as T;
 }
 
 export async function runOpenzcaStreaming(options: OpenzcaStreamingOptions): Promise<{ exitCode: number }> {

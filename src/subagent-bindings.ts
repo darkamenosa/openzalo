@@ -1,4 +1,5 @@
 import { formatOpenzaloOutboundTarget, parseOpenzaloTarget } from "./normalize.js";
+import { normalizeAccountId } from "./account-id.js";
 
 export type OpenzaloSubagentBindingRecord = {
   accountId: string;
@@ -16,41 +17,6 @@ export type OpenzaloSubagentBindingRecord = {
 
 const bindingsByConversation = new Map<string, OpenzaloSubagentBindingRecord>();
 const conversationKeysBySession = new Map<string, Set<string>>();
-
-const DEFAULT_ACCOUNT_ID = "default";
-const BLOCKED_OBJECT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
-const VALID_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
-const INVALID_CHARS_RE = /[^a-z0-9_-]+/g;
-const LEADING_DASH_RE = /^-+/;
-const TRAILING_DASH_RE = /-+$/;
-
-function canonicalizeAccountId(value: string): string {
-  if (VALID_ID_RE.test(value)) {
-    return value.toLowerCase();
-  }
-  return value
-    .toLowerCase()
-    .replace(INVALID_CHARS_RE, "-")
-    .replace(LEADING_DASH_RE, "")
-    .replace(TRAILING_DASH_RE, "")
-    .slice(0, 64);
-}
-
-function normalizeCanonicalAccountId(value: string): string | undefined {
-  const canonical = canonicalizeAccountId(value);
-  if (!canonical || BLOCKED_OBJECT_KEYS.has(canonical)) {
-    return undefined;
-  }
-  return canonical;
-}
-
-function normalizeAccountId(value: string | undefined): string {
-  const trimmed = (value ?? "").trim();
-  if (!trimmed) {
-    return DEFAULT_ACCOUNT_ID;
-  }
-  return normalizeCanonicalAccountId(trimmed) || DEFAULT_ACCOUNT_ID;
-}
 
 function toConversationKey(params: { accountId: string; to: string }): string {
   return `${params.accountId}:${params.to}`;

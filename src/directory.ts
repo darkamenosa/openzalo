@@ -1,3 +1,4 @@
+import { normalizeOpenzaloId } from "./normalize.js";
 import { runOpenzcaJson } from "./openzca.js";
 import type { ResolvedOpenzaloAccount } from "./types.js";
 
@@ -20,13 +21,6 @@ type GroupRow = {
   type?: string;
 };
 
-const toId = (value: unknown): string => {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(Math.trunc(value));
-  }
-  return typeof value === "string" ? value.trim() : "";
-};
-
 export async function listOpenzaloDirectorySelf(params: {
   account: ResolvedOpenzaloAccount;
 }): Promise<{ kind: "user"; id: string; name?: string; raw?: unknown } | null> {
@@ -38,7 +32,7 @@ export async function listOpenzaloDirectorySelf(params: {
     timeoutMs: 10_000,
   });
 
-  const id = toId(me?.userId);
+  const id = normalizeOpenzaloId(me?.userId);
   if (!id) {
     return null;
   }
@@ -69,7 +63,7 @@ export async function listOpenzaloDirectoryPeers(params: {
   const out: Array<{ kind: "user"; id: string; name?: string; raw?: unknown }> = [];
 
   for (const row of rows ?? []) {
-    const id = toId(row?.userId);
+    const id = normalizeOpenzaloId(row?.userId);
     if (!id) {
       continue;
     }
@@ -110,7 +104,7 @@ export async function listOpenzaloDirectoryGroups(params: {
   const out: Array<{ kind: "group"; id: string; name?: string; raw?: unknown }> = [];
 
   for (const row of rows ?? []) {
-    const id = toId(row?.groupId);
+    const id = normalizeOpenzaloId(row?.groupId);
     if (!id) {
       continue;
     }

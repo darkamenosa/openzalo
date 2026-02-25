@@ -4,6 +4,7 @@ import { getOpenzaloRuntime } from "./runtime.js";
 import { runOpenzcaCommand, runOpenzcaStreaming } from "./openzca.js";
 import { normalizeOpenzcaInboundPayload } from "./monitor-normalize.js";
 import type { CoreConfig, OpenzaloInboundMessage, ResolvedOpenzaloAccount } from "./types.js";
+import { dedupeStrings } from "./utils/dedupe-strings.js";
 
 type OpenzaloMonitorOptions = {
   account: ResolvedOpenzaloAccount;
@@ -46,6 +47,10 @@ function computeReconnectDelayMs(attempt: number): number {
   const jitterWindow = base * OPENZALO_RECONNECT_JITTER;
   const jitter = (Math.random() * 2 - 1) * jitterWindow;
   return Math.max(0, Math.round(base + jitter));
+}
+
+function nextReconnectAttempt(currentAttempt: number, attemptDurationMs: number): number {
+  return attemptDurationMs >= OPENZALO_RECONNECT_STABLE_RESET_MS ? 1 : currentAttempt + 1;
 }
 
 function attachAbort(parent: AbortSignal, child: AbortController): () => void {
@@ -156,23 +161,6 @@ async function waitForOpenzcaReady(options: {
     return false;
   }
   throw new Error(`openzca not ready after ${OPENZALO_READY_TIMEOUT_MS}ms (${lastError})`);
-}
-
-function dedupeStrings(values: readonly string[]): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      continue;
-    }
-    if (seen.has(trimmed)) {
-      continue;
-    }
-    seen.add(trimmed);
-    out.push(trimmed);
-  }
-  return out;
 }
 
 function resolveCombinedText(texts: string[]): string {
@@ -424,8 +412,7 @@ export async function monitorOpenzaloProvider(options: OpenzaloMonitorOptions): 
       }
 
       const attemptDurationMs = Date.now() - attemptStartedAt;
-      reconnectAttempt =
-        attemptDurationMs >= OPENZALO_RECONNECT_STABLE_RESET_MS ? 1 : reconnectAttempt + 1;
+      reconnectAttempt = nextReconnectAttempt(reconnectAttempt, attemptDurationMs);
       const delayMs = computeReconnectDelayMs(reconnectAttempt);
       const reason = streamEndedByWatchdog ? "idle timeout" : "listener exited";
       runtime.error?.(
@@ -437,8 +424,7 @@ export async function monitorOpenzaloProvider(options: OpenzaloMonitorOptions): 
         return;
       }
       const attemptDurationMs = Date.now() - attemptStartedAt;
-      reconnectAttempt =
-        attemptDurationMs >= OPENZALO_RECONNECT_STABLE_RESET_MS ? 1 : reconnectAttempt + 1;
+      reconnectAttempt = nextReconnectAttempt(reconnectAttempt, attemptDurationMs);
       const delayMs = computeReconnectDelayMs(reconnectAttempt);
       runtime.error?.(
         `[${account.accountId}] openzca listener error: ${toErrorText(error)}; ` +

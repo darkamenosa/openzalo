@@ -43,26 +43,13 @@ import {
   releaseOpenzaloOutboundDedupeSlot,
 } from "./outbound-dedupe.js";
 import type { CoreConfig, OpenzaloInboundMessage, ResolvedOpenzaloAccount } from "./types.js";
+import { dedupeStrings } from "./utils/dedupe-strings.js";
 
 const CHANNEL_ID = "openzalo" as const;
 const DEFAULT_GROUP_SYSTEM_PROMPT =
   "When sending media/files in this same group, never claim success unless media is actually attached. " +
   "Prefer MEDIA:./relative-path or MEDIA:https://... in your reply text. " +
   "If the source file is outside workspace, copy it into workspace first and then use a relative MEDIA path.";
-
-function dedupeStrings(values: readonly string[]): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const trimmed = value.trim();
-    if (!trimmed || seen.has(trimmed)) {
-      continue;
-    }
-    seen.add(trimmed);
-    out.push(trimmed);
-  }
-  return out;
-}
 
 function nextOpenzaloOutboundSequence(map: Map<string, number>, key: string): number {
   const next = (map.get(key) ?? 0) + 1;
@@ -71,12 +58,7 @@ function nextOpenzaloOutboundSequence(map: Map<string, number>, key: string): nu
 }
 
 function resolveAgentIdFromSessionKey(sessionKey: string): string | null {
-  const match = sessionKey.trim().match(/^agent:([^:]+):/i);
-  const agentId = match?.[1]?.trim();
-  if (!agentId) {
-    return null;
-  }
-  return agentId;
+  return sessionKey.trim().match(/^agent:([^:]+):/i)?.[1]?.trim() || null;
 }
 
 function resolveOpenzaloPendingGroupHistoryLimit(params: {
@@ -170,6 +152,30 @@ function resolveOpenzaloCommandBody(params: {
     return rest;
   }
   return trimmed;
+}
+
+function buildOpenzaloCommandAuthorizers(params: {
+  message: OpenzaloInboundMessage;
+  ownerAllowFrom: string[];
+  senderAllowedDm: boolean;
+  groupConfig?: Parameters<typeof resolveOpenzaloGroupCommandAuthorizers>[0]["groupConfig"];
+  wildcardConfig?: Parameters<typeof resolveOpenzaloGroupCommandAuthorizers>[0]["wildcardConfig"];
+}): Array<{ configured: boolean; allowed: boolean }> {
+  if (params.message.isGroup) {
+    const resolved = resolveOpenzaloGroupCommandAuthorizers({
+      senderId: params.message.senderId,
+      ownerAllowFrom: params.ownerAllowFrom,
+      groupConfig: params.groupConfig,
+      wildcardConfig: params.wildcardConfig,
+    });
+    return [resolved.owner, resolved.group];
+  }
+  return [
+    {
+      configured: params.ownerAllowFrom.length > 0,
+      allowed: params.senderAllowedDm,
+    },
+  ];
 }
 
 function buildOutboundMessageEventText(params: {
@@ -531,22 +537,13 @@ export async function handleOpenzaloInbound(params: {
     surface: CHANNEL_ID,
   });
   const hasControlCommand = core.channel.text.hasControlCommand(commandBody, cfg as OpenClawConfig);
-  const commandAuthorizers = message.isGroup
-    ? (() => {
-        const resolved = resolveOpenzaloGroupCommandAuthorizers({
-          senderId: message.senderId,
-          ownerAllowFrom: effectiveAllowFrom,
-          groupConfig: groupMatch.groupConfig,
-          wildcardConfig: groupMatch.wildcardConfig,
-        });
-        return [resolved.owner, resolved.group];
-      })()
-    : [
-        {
-          configured: effectiveAllowFrom.length > 0,
-          allowed: senderAllowedDm,
-        },
-      ];
+  const commandAuthorizers = buildOpenzaloCommandAuthorizers({
+    message,
+    ownerAllowFrom: effectiveAllowFrom,
+    senderAllowedDm,
+    groupConfig: groupMatch.groupConfig,
+    wildcardConfig: groupMatch.wildcardConfig,
+  });
 
   const commandGate = resolveControlCommandGate({
     useAccessGroups,

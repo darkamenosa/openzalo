@@ -1,4 +1,4 @@
-import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk";
+import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "./account-id.js";
 import type { CoreConfig, OpenzaloAccountConfig, ResolvedOpenzaloAccount } from "./types.js";
 
 function listConfiguredAccountIds(cfg: CoreConfig): string[] {

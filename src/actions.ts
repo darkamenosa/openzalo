@@ -11,7 +11,7 @@ import {
   getLatestOpenzaloMessageForThread,
   resolveOpenzaloMessageRef,
 } from "./message-refs.js";
-import { parseOpenzaloTarget } from "./normalize.js";
+import { normalizeOpenzaloId, parseOpenzaloTarget } from "./normalize.js";
 import { runOpenzcaCommand, runOpenzcaJson } from "./openzca.js";
 import type { CoreConfig, ResolvedOpenzaloAccount } from "./types.js";
 
@@ -45,15 +45,7 @@ type OpenzcaRecentResult = {
   messages?: OpenzcaRecentRow[];
 };
 
-function normalizeId(value: unknown): string {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(Math.trunc(value));
-  }
-  if (typeof value === "string") {
-    return value.trim();
-  }
-  return "";
-}
+const normalizeId = normalizeOpenzaloId;
 
 function resolveActionTarget(
   params: Record<string, unknown>,
