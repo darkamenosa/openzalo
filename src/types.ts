@@ -26,6 +26,7 @@ export type OpenzaloActionConfig = {
   groups?: boolean;
   pins?: boolean;
   memberInfo?: boolean;
+  groupMembers?: boolean;
 };
 
 export type OpenzaloThreadBindingsConfig = {

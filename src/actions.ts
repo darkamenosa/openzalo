@@ -28,6 +28,7 @@ const SUPPORTED_ACTIONS = new Set<ChannelMessageActionName>([
   "unpin",
   "list-pins",
   "member-info",
+  "list-group-members",
 ]);
 
 type OpenzcaRecentRow = {
@@ -185,6 +186,126 @@ function normalizePinnedThreadIds(payload: unknown): string[] {
   };
   collect(payload);
   return Array.from(out);
+}
+
+function pickGroupMemberItems(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+  const record = payload as Record<string, unknown>;
+  const arrayCandidates = [
+    record.members,
+    record.memberList,
+    record.member_list,
+    record.participants,
+    record.users,
+    record.items,
+    record.data,
+  ];
+  for (const candidate of arrayCandidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  const objectCandidates = [
+    record.members,
+    record.memberList,
+    record.member_list,
+    record.participants,
+    record.users,
+    record.items,
+    record.data,
+  ];
+  for (const candidate of objectCandidates) {
+    if (candidate && typeof candidate === "object") {
+      return Object.values(candidate as Record<string, unknown>);
+    }
+  }
+
+  return [record];
+}
+
+function normalizeGroupMemberId(row: unknown): string {
+  if (typeof row === "string" || typeof row === "number") {
+    return normalizeId(row);
+  }
+  if (!row || typeof row !== "object") {
+    return "";
+  }
+  const record = row as Record<string, unknown>;
+  const nestedUser =
+    record.user && typeof record.user === "object" ? (record.user as Record<string, unknown>) : undefined;
+  return normalizeId(
+    record.userId ??
+      record.user_id ??
+      record.memberId ??
+      record.member_id ??
+      record.uid ??
+      record.id ??
+      nestedUser?.userId ??
+      nestedUser?.user_id ??
+      nestedUser?.id,
+  );
+}
+
+function normalizeGroupMemberName(row: unknown): string | undefined {
+  if (!row || typeof row !== "object") {
+    return undefined;
+  }
+  const record = row as Record<string, unknown>;
+  const nestedUser =
+    record.user && typeof record.user === "object" ? (record.user as Record<string, unknown>) : undefined;
+  const candidates = [
+    record.displayName,
+    record.display_name,
+    record.name,
+    record.fullName,
+    record.full_name,
+    record.username,
+    nestedUser?.displayName,
+    nestedUser?.display_name,
+    nestedUser?.name,
+    nestedUser?.fullName,
+    nestedUser?.full_name,
+    nestedUser?.username,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string") {
+      const normalized = candidate.trim();
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+  return undefined;
+}
+
+function normalizeGroupMembers(payload: unknown): Array<{ id: string; name?: string; raw?: unknown }> {
+  const items = pickGroupMemberItems(payload);
+  const members = new Map<string, { id: string; name?: string; raw?: unknown }>();
+
+  for (const item of items) {
+    const id = normalizeGroupMemberId(item);
+    if (!id) {
+      continue;
+    }
+    const name = normalizeGroupMemberName(item);
+    const existing = members.get(id);
+    if (!existing) {
+      members.set(id, { id, name, raw: item });
+      continue;
+    }
+    if (!existing.name && name) {
+      existing.name = name;
+      existing.raw = item;
+    }
+  }
+
+  return Array.from(members.values());
 }
 
 async function readRecentRows(params: {
@@ -347,8 +468,12 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
         actions.add("unpin");
         actions.add("list-pins");
       }
-      if (gate("memberInfo")) {
+      const memberInfoEnabled = gate("memberInfo");
+      if (memberInfoEnabled) {
         actions.add("member-info");
+      }
+      if (memberInfoEnabled || gate("groupMembers")) {
+        actions.add("list-group-members");
       }
     }
 
@@ -584,6 +709,25 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
         timeoutMs: 15_000,
       });
       return jsonResult({ ok: true, member: row });
+    }
+
+    if (action === "list-group-members") {
+      const target = resolveGroupTarget(params, contextTarget);
+      const payload = await runOpenzcaJson<unknown>({
+        binary: account.zcaBinary,
+        profile: account.profile,
+        args: ["group", "members", target.threadId, "--json"],
+        timeoutMs: 20_000,
+      });
+      const members = normalizeGroupMembers(payload);
+      const lines = members.map((member) => `${member.id} - ${member.name ?? ""}`.trimEnd());
+      return jsonResult({
+        ok: true,
+        groupId: target.threadId,
+        count: members.length,
+        members,
+        lines,
+      });
     }
 
     throw new Error(`Action ${action} is not supported for provider openzalo.`);

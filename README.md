@@ -147,7 +147,8 @@ openclaw message send --channel openzalo --target group:<groupId> --message "Hel
         messages: true, // read/edit/unsend
         groups: true, // rename/add/remove/leave
         pins: true, // pin/unpin/list-pins
-        memberInfo: true,
+        memberInfo: true, // member-info
+        groupMembers: true, // list-group-members (member id - name)
       },
     },
   },

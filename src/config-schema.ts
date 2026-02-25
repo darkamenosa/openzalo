@@ -18,6 +18,7 @@ const openzaloActionSchema = z
     groups: z.boolean().default(true),
     pins: z.boolean().default(true),
     memberInfo: z.boolean().default(true),
+    groupMembers: z.boolean().default(true),
   })
   .optional();
 
