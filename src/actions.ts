@@ -13,6 +13,7 @@ import {
 } from "./message-refs.js";
 import { normalizeOpenzaloId, parseOpenzaloTarget } from "./normalize.js";
 import { runOpenzcaCommand, runOpenzcaJson } from "./openzca.js";
+import { resolveListGroupMembersFallbackTarget } from "./actions-target.js";
 import type { CoreConfig, ResolvedOpenzaloAccount } from "./types.js";
 
 const SUPPORTED_ACTIONS = new Set<ChannelMessageActionName>([
@@ -712,7 +713,10 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
     }
 
     if (action === "list-group-members") {
-      const target = resolveGroupTarget(params, contextTarget);
+      const target = resolveGroupTarget(
+        params,
+        resolveListGroupMembersFallbackTarget(params, contextTarget),
+      );
       const payload = await runOpenzcaJson<unknown>({
         binary: account.zcaBinary,
         profile: account.profile,
