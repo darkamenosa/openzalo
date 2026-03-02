@@ -1,6 +1,7 @@
 {
   "id": "openzalo",
   "channels": ["openzalo"],
+  "skills": ["./skills"],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

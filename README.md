@@ -11,6 +11,25 @@ OpenClaw channel plugin for Zalo personal accounts via `openzca` CLI.
 - Package name: `@openclaw/openzalo`
 - Required external binary: `openzca`
 
+## Bundled Skills
+
+This plugin now bundles optional skills (auto-discovered from `./skills`):
+
+- `openzalo`: action playbook for OpenZalo via `message` tool.
+- `openzca`: advanced `openzca` CLI workflows for tasks not yet exposed as OpenZalo actions.
+
+### Owner/Admin Usage Guidance for `openzca` Skill
+
+`openzca` is installed at workspace/plugin level, not per-sender.  
+So "owner-only" should be enforced by runtime policy, not by skill installation.
+
+Recommended setup:
+
+1. Keep general agents on `tools.profile: "messaging"` (no `exec`).
+2. Grant `exec` only to a dedicated admin agent.
+3. In OpenZalo group config, use `allowFrom` + `skills` filter to expose advanced skills only in admin-controlled groups.
+4. Use `openzalo` skill/actions for normal operations; reserve `openzca` for explicit advanced/admin tasks.
+
 ## Prerequisites
 
 - OpenClaw Gateway is installed and running.
