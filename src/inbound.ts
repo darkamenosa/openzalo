@@ -1,4 +1,5 @@
 import {
+  createScopedPairingAccess,
   createReplyPrefixOptions,
   logInboundDrop,
   resolveControlCommandGate,
@@ -416,7 +417,12 @@ export async function handleOpenzaloInbound(params: {
 
   const configAllowFrom = normalizeAllowlist(account.config.allowFrom);
   const configGroupAllowFrom = normalizeAllowlist(account.config.groupAllowFrom);
-  const storeAllowFrom = await core.channel.pairing.readAllowFromStore(CHANNEL_ID).catch(() => []);
+  const pairing = createScopedPairingAccess({
+    core,
+    channel: CHANNEL_ID,
+    accountId: account.accountId,
+  });
+  const storeAllowFrom = await pairing.readAllowFromStore().catch(() => []);
   const storeAllowlist = normalizeAllowlist(storeAllowFrom);
 
   const effectiveAllowFrom = [...configAllowFrom, ...storeAllowlist].filter(Boolean);
@@ -471,10 +477,9 @@ export async function handleOpenzaloInbound(params: {
 
     if (dmPolicy !== "open" && !senderAllowedDm) {
       if (dmPolicy === "pairing") {
-        const { code, created } = await core.channel.pairing.upsertPairingRequest({
-          channel: CHANNEL_ID,
-          id: message.senderId,
+        const { code, created } = await pairing.upsertPairingRequest({
           meta: { name: message.senderName },
+          id: message.senderId,
         });
         if (created) {
           try {
