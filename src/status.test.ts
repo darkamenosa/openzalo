@@ -50,3 +50,22 @@ test("collectOpenzaloStatusIssues reports probe/runtime failures", () => {
   assert.equal(issues[1]?.kind, "runtime");
   assert.match(issues[1]?.message ?? "", /channel error/i);
 });
+
+test("collectOpenzaloStatusIssues reports disconnected runtime separately", () => {
+  const issues = collectOpenzaloStatusIssues([
+    {
+      accountId: "default",
+      enabled: true,
+      configured: true,
+      running: true,
+      connected: false,
+      reconnectAttempts: 2,
+      lastError: "500 auth_unavailable: no auth available",
+    },
+  ]);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0]?.kind, "runtime");
+  assert.match(issues[0]?.message ?? "", /disconnected/i);
+  assert.match(issues[0]?.message ?? "", /reconnectAttempts=2/i);
+  assert.match(issues[0]?.message ?? "", /no auth available/i);
+});

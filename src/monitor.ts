@@ -3,15 +3,32 @@ import { handleOpenzaloInbound } from "./inbound.js";
 import { getOpenzaloRuntime } from "./runtime.js";
 import { runOpenzcaCommand, runOpenzcaStreaming } from "./openzca.js";
 import { normalizeOpenzcaInboundPayload } from "./monitor-normalize.js";
+import {
+  clearOpenzaloRuntimeHealthState,
+  markOpenzaloConnected,
+  markOpenzaloDisconnected,
+  recordOpenzaloStreamActivity,
+  registerOpenzaloReconnectHandler,
+} from "./runtime-health.js";
 import type { CoreConfig, OpenzaloInboundMessage, ResolvedOpenzaloAccount } from "./types.js";
 import { dedupeStrings } from "./utils/dedupe-strings.js";
+
+export type OpenzaloStatusPatch = {
+  lastInboundAt?: number;
+  lastOutboundAt?: number;
+  connected?: boolean;
+  reconnectAttempts?: number | null;
+  lastConnectedAt?: number | null;
+  lastEventAt?: number | null;
+  lastError?: string | null;
+};
 
 type OpenzaloMonitorOptions = {
   account: ResolvedOpenzaloAccount;
   cfg: CoreConfig;
   runtime: RuntimeEnv;
   abortSignal: AbortSignal;
-  statusSink?: (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void;
+  statusSink?: (patch: OpenzaloStatusPatch) => void;
 };
 
 type OpenzaloDebounceEntry = {
@@ -109,6 +126,53 @@ async function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
     };
 
     signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function noteOpenzaloStreamActivity(params: {
+  accountId: string;
+  statusSink?: (patch: OpenzaloStatusPatch) => void;
+  at?: number;
+}): void {
+  const at = params.at ?? Date.now();
+  recordOpenzaloStreamActivity(params.accountId, at);
+  params.statusSink?.({ lastEventAt: at });
+}
+
+function noteOpenzaloConnected(params: {
+  accountId: string;
+  statusSink?: (patch: OpenzaloStatusPatch) => void;
+  at?: number;
+}): void {
+  const at = params.at ?? Date.now();
+  markOpenzaloConnected({
+    accountId: params.accountId,
+    at,
+  });
+  params.statusSink?.({
+    connected: true,
+    reconnectAttempts: 0,
+    lastConnectedAt: at,
+    lastEventAt: at,
+    lastError: null,
+  });
+}
+
+function noteOpenzaloDisconnected(params: {
+  accountId: string;
+  statusSink?: (patch: OpenzaloStatusPatch) => void;
+  reason?: string | null;
+  reconnectAttempts?: number;
+}): void {
+  markOpenzaloDisconnected({
+    accountId: params.accountId,
+    reason: params.reason,
+    reconnectAttempts: params.reconnectAttempts,
+  });
+  params.statusSink?.({
+    connected: false,
+    reconnectAttempts: params.reconnectAttempts,
+    ...(params.reason !== undefined ? { lastError: params.reason } : {}),
   });
 }
 
@@ -261,6 +325,15 @@ export async function monitorOpenzaloProvider(options: OpenzaloMonitorOptions): 
   const { account, cfg, runtime, abortSignal, statusSink } = options;
   const core = getOpenzaloRuntime();
 
+  clearOpenzaloRuntimeHealthState(account.accountId);
+  statusSink?.({
+    connected: false,
+    reconnectAttempts: 0,
+    lastConnectedAt: null,
+    lastEventAt: null,
+    lastError: null,
+  });
+
   runtime.log?.(
     `[${account.accountId}] starting openzca listener (profile=${account.profile}, binary=${account.zcaBinary})`,
   );
@@ -323,7 +396,7 @@ export async function monitorOpenzaloProvider(options: OpenzaloMonitorOptions): 
 
   while (!abortSignal.aborted) {
     const attemptStartedAt = Date.now();
-    let streamEndedByWatchdog = false;
+    let streamEndReason: string | null = null;
     try {
       const ready = await waitForOpenzcaReady({
         account,
@@ -356,6 +429,7 @@ export async function monitorOpenzaloProvider(options: OpenzaloMonitorOptions): 
       const streamAbort = new AbortController();
       const detachAbort = attachAbort(abortSignal, streamAbort);
       let lastActivityAt = Date.now();
+      let streamConnected = false;
       const touchActivity = () => {
         lastActivityAt = Date.now();
       };
@@ -364,9 +438,20 @@ export async function monitorOpenzaloProvider(options: OpenzaloMonitorOptions): 
         runtime,
         getLastActivityAt: () => lastActivityAt,
         onIdle: () => {
-          streamEndedByWatchdog = true;
+          streamEndReason = "idle timeout";
+          noteOpenzaloDisconnected({
+            accountId: account.accountId,
+            statusSink,
+            reason: "openzca idle timeout",
+            reconnectAttempts: reconnectAttempt + 1,
+          });
           streamAbort.abort();
         },
+      });
+      const detachReconnect = registerOpenzaloReconnectHandler(account.accountId, (reason) => {
+        streamEndReason = "reconnect requested";
+        runtime.error?.(`[${account.accountId}] openzca reconnect requested: ${reason}`);
+        streamAbort.abort();
       });
 
       try {
@@ -378,6 +463,10 @@ export async function monitorOpenzaloProvider(options: OpenzaloMonitorOptions): 
           onStdoutLine: (line) => {
             if (line.trim()) {
               touchActivity();
+              noteOpenzaloStreamActivity({
+                accountId: account.accountId,
+                statusSink,
+              });
             }
           },
           onStderrLine: (line) => {
@@ -385,10 +474,25 @@ export async function monitorOpenzaloProvider(options: OpenzaloMonitorOptions): 
               return;
             }
             touchActivity();
+            noteOpenzaloStreamActivity({
+              accountId: account.accountId,
+              statusSink,
+            });
             runtime.error?.(`[${account.accountId}] openzca stderr: ${line}`);
           },
           onJsonLine: async (payload) => {
             touchActivity();
+            noteOpenzaloStreamActivity({
+              accountId: account.accountId,
+              statusSink,
+            });
+            if (!streamConnected) {
+              streamConnected = true;
+              noteOpenzaloConnected({
+                accountId: account.accountId,
+                statusSink,
+              });
+            }
             const message = normalizeOpenzcaInboundPayload(payload, selfId);
             if (!message) {
               if (payload.kind === "lifecycle" && payload.event === "connected") {
@@ -403,31 +507,55 @@ export async function monitorOpenzaloProvider(options: OpenzaloMonitorOptions): 
           },
         });
       } finally {
+        detachReconnect();
         stopWatchdog();
         detachAbort();
       }
 
       if (abortSignal.aborted) {
+        noteOpenzaloDisconnected({
+          accountId: account.accountId,
+          statusSink,
+          reconnectAttempts: reconnectAttempt,
+        });
         return;
       }
 
       const attemptDurationMs = Date.now() - attemptStartedAt;
       reconnectAttempt = nextReconnectAttempt(reconnectAttempt, attemptDurationMs);
       const delayMs = computeReconnectDelayMs(reconnectAttempt);
-      const reason = streamEndedByWatchdog ? "idle timeout" : "listener exited";
+      const reason = streamEndReason ?? "listener exited";
+      noteOpenzaloDisconnected({
+        accountId: account.accountId,
+        statusSink,
+        reason: reason === "reconnect requested" ? undefined : `openzca ${reason}`,
+        reconnectAttempts: reconnectAttempt,
+      });
       runtime.error?.(
         `[${account.accountId}] openzca ${reason}; reconnecting in ${Math.round(delayMs / 1000)}s`,
       );
       await sleepWithAbort(delayMs, abortSignal);
     } catch (error) {
       if (abortSignal.aborted) {
+        noteOpenzaloDisconnected({
+          accountId: account.accountId,
+          statusSink,
+          reconnectAttempts: reconnectAttempt,
+        });
         return;
       }
       const attemptDurationMs = Date.now() - attemptStartedAt;
       reconnectAttempt = nextReconnectAttempt(reconnectAttempt, attemptDurationMs);
       const delayMs = computeReconnectDelayMs(reconnectAttempt);
+      const errorText = toErrorText(error);
+      noteOpenzaloDisconnected({
+        accountId: account.accountId,
+        statusSink,
+        reason: errorText,
+        reconnectAttempts: reconnectAttempt,
+      });
       runtime.error?.(
-        `[${account.accountId}] openzca listener error: ${toErrorText(error)}; ` +
+        `[${account.accountId}] openzca listener error: ${errorText}; ` +
           `reconnecting in ${Math.round(delayMs / 1000)}s`,
       );
       try {

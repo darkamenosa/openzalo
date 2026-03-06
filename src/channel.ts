@@ -33,6 +33,7 @@ import {
 import { openzaloOnboardingAdapter } from "./onboarding.js";
 import { probeOpenzaloAuth } from "./probe.js";
 import { getOpenzaloRuntime } from "./runtime.js";
+import { getOpenzaloRuntimeHealthState } from "./runtime-health.js";
 import { sendMediaOpenzalo, sendTextOpenzalo } from "./send.js";
 import { OpenzaloConfigSchema } from "./config-schema.js";
 import { collectOpenzaloStatusIssues, resolveOpenzaloAccountState } from "./status.js";
@@ -60,6 +61,25 @@ function normalizeDirectoryName(value: unknown): string {
 
 function resolveAccount(cfg: unknown, accountId?: string | null): ResolvedOpenzaloAccount {
   return resolveOpenzaloAccount({ cfg: cfg as CoreConfig, accountId });
+}
+
+function mergeOpenzaloRuntimeState(accountId: string, runtime?: Record<string, unknown> | null) {
+  const local = getOpenzaloRuntimeHealthState(accountId);
+  return {
+    connected:
+      local?.connected ?? (typeof runtime?.connected === "boolean" ? runtime.connected : null),
+    reconnectAttempts:
+      local?.reconnectAttempts ??
+      (typeof runtime?.reconnectAttempts === "number" ? runtime.reconnectAttempts : null),
+    lastConnectedAt:
+      local?.lastConnectedAt ??
+      (typeof runtime?.lastConnectedAt === "number" ? runtime.lastConnectedAt : null),
+    lastEventAt:
+      local?.lastEventAt ?? (typeof runtime?.lastEventAt === "number" ? runtime.lastEventAt : null),
+    lastError:
+      local?.lastError ??
+      (typeof runtime?.lastError === "string" || runtime?.lastError === null ? runtime.lastError : null),
+  };
 }
 
 function chooseDirectoryMatch<Row extends { id: string; name?: string }>(params: {
@@ -512,6 +532,10 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
     defaultRuntime: {
       accountId: DEFAULT_ACCOUNT_ID,
       running: false,
+      connected: false,
+      reconnectAttempts: 0,
+      lastConnectedAt: null,
+      lastEventAt: null,
       lastStartAt: null,
       lastStopAt: null,
       lastError: null,
@@ -524,6 +548,10 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
       profile: snapshot.profile ?? null,
       zcaBinary: snapshot.zcaBinary ?? null,
       running: snapshot.running ?? false,
+      connected: snapshot.connected ?? null,
+      reconnectAttempts: snapshot.reconnectAttempts ?? null,
+      lastConnectedAt: snapshot.lastConnectedAt ?? null,
+      lastEventAt: snapshot.lastEventAt ?? null,
       lastStartAt: snapshot.lastStartAt ?? null,
       lastStopAt: snapshot.lastStopAt ?? null,
       lastError: snapshot.lastError ?? null,
@@ -532,21 +560,28 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
     }),
     probeAccount: async ({ account, timeoutMs }) =>
       await probeOpenzaloAuth({ account, timeoutMs }),
-    buildAccountSnapshot: ({ account, runtime, probe }) => ({
-      accountId: account.accountId,
-      name: account.name,
-      enabled: account.enabled,
-      configured: account.configured,
-      profile: account.profile,
-      zcaBinary: account.zcaBinary,
-      running: runtime?.running ?? false,
-      lastStartAt: runtime?.lastStartAt ?? null,
-      lastStopAt: runtime?.lastStopAt ?? null,
-      lastError: runtime?.lastError ?? null,
-      probe,
-      lastInboundAt: runtime?.lastInboundAt ?? null,
-      lastOutboundAt: runtime?.lastOutboundAt ?? null,
-    }),
+    buildAccountSnapshot: ({ account, runtime, probe }) => {
+      const mergedRuntime = mergeOpenzaloRuntimeState(account.accountId, runtime);
+      return {
+        accountId: account.accountId,
+        name: account.name,
+        enabled: account.enabled,
+        configured: account.configured,
+        profile: account.profile,
+        zcaBinary: account.zcaBinary,
+        running: runtime?.running ?? false,
+        connected: mergedRuntime.connected,
+        reconnectAttempts: mergedRuntime.reconnectAttempts,
+        lastConnectedAt: mergedRuntime.lastConnectedAt,
+        lastEventAt: mergedRuntime.lastEventAt,
+        lastStartAt: runtime?.lastStartAt ?? null,
+        lastStopAt: runtime?.lastStopAt ?? null,
+        lastError: mergedRuntime.lastError,
+        probe,
+        lastInboundAt: runtime?.lastInboundAt ?? null,
+        lastOutboundAt: runtime?.lastOutboundAt ?? null,
+      };
+    },
     resolveAccountState: ({ enabled, configured }) =>
       resolveOpenzaloAccountState({ enabled, configured }),
   },
@@ -557,6 +592,11 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
         accountId: account.accountId,
         profile: account.profile,
         zcaBinary: account.zcaBinary,
+        connected: false,
+        reconnectAttempts: 0,
+        lastConnectedAt: null,
+        lastEventAt: null,
+        lastError: null,
       });
       ctx.log?.info(
         `[${account.accountId}] starting provider (profile=${account.profile}, binary=${account.zcaBinary})`,

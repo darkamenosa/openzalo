@@ -4,6 +4,10 @@ function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function readProbeFailure(value: unknown): { failed: boolean; error?: string } {
   if (!value || typeof value !== "object") {
     return { failed: false };
@@ -66,7 +70,24 @@ export function collectOpenzaloStatusIssues(accounts: ChannelAccountSnapshot[]):
       });
     }
 
+    const running = account.running === true;
+    const connected =
+      account.connected === false ? false : account.connected === true ? true : null;
+    const reconnectAttempts = asNumber(account.reconnectAttempts);
     const lastError = asString(account.lastError);
+    if (running && connected === false) {
+      issues.push({
+        channel: "openzalo",
+        accountId,
+        kind: "runtime",
+        message:
+          `openzca disconnected${reconnectAttempts != null ? ` (reconnectAttempts=${reconnectAttempts})` : ""}` +
+          `${lastError ? `: ${lastError}` : "."}`,
+        fix: "Check openzca auth/profile health on the gateway host and inspect gateway logs.",
+      });
+      continue;
+    }
+
     if (lastError) {
       issues.push({
         channel: "openzalo",

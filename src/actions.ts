@@ -12,7 +12,7 @@ import {
   resolveOpenzaloMessageRef,
 } from "./message-refs.js";
 import { normalizeOpenzaloId, parseOpenzaloTarget } from "./normalize.js";
-import { runOpenzcaCommand, runOpenzcaJson } from "./openzca.js";
+import { runOpenzcaAccountCommand, runOpenzcaAccountJson } from "./openzca-account.js";
 import { resolveListGroupMembersFallbackTarget } from "./actions-target.js";
 import type { CoreConfig, ResolvedOpenzaloAccount } from "./types.js";
 
@@ -318,7 +318,8 @@ async function readRecentRows(params: {
     args.push("--group");
   }
 
-  const recent = await runOpenzcaJson<unknown>({
+  const recent = await runOpenzcaAccountJson<unknown>({
+    account: params.account,
     binary: params.account.zcaBinary,
     profile: params.account.profile,
     args,
@@ -514,7 +515,8 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
         args.push("--group");
       }
 
-      await runOpenzcaCommand({
+      await runOpenzcaAccountCommand({
+        account,
         binary: account.zcaBinary,
         profile: account.profile,
         args,
@@ -534,7 +536,8 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
         args.push("--group");
       }
 
-      const payload = await runOpenzcaJson<unknown>({
+      const payload = await runOpenzcaAccountJson<unknown>({
+        account,
         binary: account.zcaBinary,
         profile: account.profile,
         args,
@@ -576,7 +579,8 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
         args.push("--group");
       }
 
-      await runOpenzcaCommand({
+      await runOpenzcaAccountCommand({
+        account,
         binary: account.zcaBinary,
         profile: account.profile,
         args,
@@ -606,7 +610,8 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
         args.push("--group");
       }
 
-      await runOpenzcaCommand({
+      await runOpenzcaAccountCommand({
+        account,
         binary: account.zcaBinary,
         profile: account.profile,
         args,
@@ -620,7 +625,8 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
       const displayName =
         readStringParam(params, "displayName") ??
         readStringParam(params, "name", { required: true });
-      await runOpenzcaCommand({
+      await runOpenzcaAccountCommand({
+        account,
         binary: account.zcaBinary,
         profile: account.profile,
         args: ["group", "rename", target.threadId, displayName],
@@ -637,7 +643,8 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
           `OpenZalo ${action} requires at least one participant id (participant, participantIds, or userId).`,
         );
       }
-      await runOpenzcaCommand({
+      await runOpenzcaAccountCommand({
+        account,
         binary: account.zcaBinary,
         profile: account.profile,
         args: [
@@ -658,7 +665,8 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
 
     if (action === "leaveGroup") {
       const target = resolveGroupTarget(params, contextTarget);
-      await runOpenzcaCommand({
+      await runOpenzcaAccountCommand({
+        account,
         binary: account.zcaBinary,
         profile: account.profile,
         args: ["group", "leave", target.threadId],
@@ -674,7 +682,8 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
         args.push("--group");
       }
 
-      await runOpenzcaCommand({
+      await runOpenzcaAccountCommand({
+        account,
         binary: account.zcaBinary,
         profile: account.profile,
         args,
@@ -685,7 +694,8 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
 
     if (action === "list-pins") {
       const target = resolveActionTarget(params, false, contextTarget);
-      const payload = await runOpenzcaJson<unknown>({
+      const payload = await runOpenzcaAccountJson<unknown>({
+        account,
         binary: account.zcaBinary,
         profile: account.profile,
         args: ["msg", "list-pins", "--json"],
@@ -703,7 +713,8 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
 
     if (action === "member-info") {
       const userId = readStringParam(params, "userId", { required: true });
-      const row = await runOpenzcaJson<unknown>({
+      const row = await runOpenzcaAccountJson<unknown>({
+        account,
         binary: account.zcaBinary,
         profile: account.profile,
         args: ["msg", "member-info", userId, "--json"],
@@ -717,7 +728,8 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
         params,
         resolveListGroupMembersFallbackTarget(params, contextTarget),
       );
-      const payload = await runOpenzcaJson<unknown>({
+      const payload = await runOpenzcaAccountJson<unknown>({
+        account,
         binary: account.zcaBinary,
         profile: account.profile,
         args: ["group", "members", target.threadId, "--json"],

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseOpenzaloTarget } from "./normalize.js";
-import { runOpenzcaCommand } from "./openzca.js";
+import { runOpenzcaAccountCommand } from "./openzca-account.js";
 import { getOpenzaloRuntime } from "./runtime.js";
 import type { CoreConfig, ResolvedOpenzaloAccount } from "./types.js";
 import { parseOpenzcaMessageRefs } from "./message-refs.js";
@@ -381,7 +381,8 @@ export async function sendTextOpenzalo(options: SendTextOptions): Promise<Openza
   });
 
   try {
-    const result = await runOpenzcaCommand({
+    const result = await runOpenzcaAccountCommand({
+      account,
       binary: account.zcaBinary,
       profile: account.profile,
       args,
@@ -466,9 +467,10 @@ export async function sendMediaOpenzalo(
   });
 
   try {
-    let result: Awaited<ReturnType<typeof runOpenzcaCommand>>;
+    let result: Awaited<ReturnType<typeof runOpenzcaAccountCommand>>;
     try {
-      result = await runOpenzcaCommand({
+      result = await runOpenzcaAccountCommand({
+        account,
         binary: account.zcaBinary,
         profile: account.profile,
         args,
@@ -491,7 +493,8 @@ export async function sendMediaOpenzalo(
           source,
           mediaCommand,
         });
-        result = await runOpenzcaCommand({
+        result = await runOpenzcaAccountCommand({
+          account,
           binary: account.zcaBinary,
           profile: account.profile,
           args,
@@ -563,7 +566,8 @@ export async function sendTypingOpenzalo(options: SendTypingOptions): Promise<vo
   }
 
   try {
-    await runOpenzcaCommand({
+    await runOpenzcaAccountCommand({
+      account,
       binary: account.zcaBinary,
       profile: account.profile,
       args,

@@ -1,5 +1,5 @@
 import { normalizeOpenzaloId } from "./normalize.js";
-import { runOpenzcaJson } from "./openzca.js";
+import { runOpenzcaAccountJson } from "./openzca-account.js";
 import type { ResolvedOpenzaloAccount } from "./types.js";
 
 type MeInfo = {
@@ -25,7 +25,8 @@ export async function listOpenzaloDirectorySelf(params: {
   account: ResolvedOpenzaloAccount;
 }): Promise<{ kind: "user"; id: string; name?: string; raw?: unknown } | null> {
   const { account } = params;
-  const me = await runOpenzcaJson<MeInfo>({
+  const me = await runOpenzcaAccountJson<MeInfo>({
+    account,
     binary: account.zcaBinary,
     profile: account.profile,
     args: ["me", "info", "--json"],
@@ -51,7 +52,8 @@ export async function listOpenzaloDirectoryPeers(params: {
   limit?: number;
 }): Promise<Array<{ kind: "user"; id: string; name?: string; raw?: unknown }>> {
   const { account, query, limit } = params;
-  const rows = await runOpenzcaJson<FriendRow[]>({
+  const rows = await runOpenzcaAccountJson<FriendRow[]>({
+    account,
     binary: account.zcaBinary,
     profile: account.profile,
     args: ["friend", "list", "--json"],
@@ -92,7 +94,8 @@ export async function listOpenzaloDirectoryGroups(params: {
   limit?: number;
 }): Promise<Array<{ kind: "group"; id: string; name?: string; raw?: unknown }>> {
   const { account, query, limit } = params;
-  const rows = await runOpenzcaJson<GroupRow[]>({
+  const rows = await runOpenzcaAccountJson<GroupRow[]>({
+    account,
     binary: account.zcaBinary,
     profile: account.profile,
     args: ["group", "list", "--json"],

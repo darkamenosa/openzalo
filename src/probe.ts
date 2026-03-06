@@ -22,6 +22,14 @@ function buildProbeCacheKey(account: ResolvedOpenzaloAccount): string {
   return [account.accountId.trim(), account.profile.trim(), account.zcaBinary.trim()].join("|");
 }
 
+function clearCachedProbeByPrefix(prefix: string): void {
+  for (const key of probeCache.keys()) {
+    if (key.startsWith(prefix)) {
+      probeCache.delete(key);
+    }
+  }
+}
+
 function readCachedProbe(key: string, now: number): OpenzaloProbe | null {
   const cached = probeCache.get(key);
   if (!cached) {
@@ -49,6 +57,14 @@ function writeCachedProbe(key: string, probe: OpenzaloProbe, now: number, ttlMs:
 
 export function clearOpenzaloProbeCache(): void {
   probeCache.clear();
+}
+
+export function clearOpenzaloProbeCacheForAccount(accountId: string): void {
+  const normalized = accountId.trim();
+  if (!normalized) {
+    return;
+  }
+  clearCachedProbeByPrefix(`${normalized}|`);
 }
 
 export async function probeOpenzaloAuth(params: {
