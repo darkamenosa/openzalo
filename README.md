@@ -10,6 +10,7 @@ OpenClaw channel plugin for Zalo personal accounts via `openzca` CLI.
 - Channel id: `openzalo`
 - Package name: `@openclaw/openzalo`
 - Required external binary: `openzca`
+- Optional external binary for `/acp` support: `acpx`
 
 ## Bundled Skills
 
@@ -34,12 +35,26 @@ Recommended setup:
 
 - OpenClaw Gateway is installed and running.
 - `openzca` is installed and available in `PATH` (or configure `channels.openzalo.zcaBinary`).
+- If you want OpenZalo ACP-local sessions via `/acp`, install `acpx` too.
 - You can authenticate with your Zalo account on the gateway machine.
 
 Example direct login with `openzca`:
 
 ```bash
 openzca --profile default auth login
+```
+
+Example `acpx` install for `/acp` support:
+
+```bash
+npm i -g acpx
+```
+
+Verify:
+
+```bash
+which acpx
+acpx --help
 ```
 
 ## Install (npm)
@@ -105,6 +120,60 @@ openclaw message send --channel openzalo --target <userId> --message "Hello from
 openclaw message send --channel openzalo --target group:<groupId> --message "Hello group"
 ```
 
+## ACPX (`/acp`) Support
+
+This plugin can bind the current OpenZalo conversation to a local ACPX session without changing OpenClaw core.
+
+Install `acpx` first:
+
+```bash
+npm i -g acpx
+```
+
+If the gateway service cannot see your shell `PATH`, set `channels.openzalo.acpx.command` to the absolute path from `which acpx`.
+
+Example config:
+
+```json5
+{
+  channels: {
+    openzalo: {
+      acpx: {
+        enabled: true,
+        command: "/full/path/to/acpx", // or "acpx" if PATH is correct
+        agent: "claude", // e.g. claude | codex
+        cwd: "/Users/<you>/.openclaw/workspace",
+        permissionMode: "approve-all", // approve-all | approve-reads | deny-all
+        nonInteractivePermissions: "fail", // fail | deny
+      },
+    },
+  },
+}
+```
+
+Notes:
+
+- `agent` is the ACPX agent id. For Claude Code, use `claude`. For Codex, use `codex`.
+- `cwd` is the working directory ACPX will use for that conversation.
+- `command` should be an absolute path if `/acp on` reports `acpx command not found`.
+
+Supported OpenZalo ACP commands:
+
+```text
+/acp status
+/acp on
+/acp on claude cwd=/Users/<you>/.openclaw/workspace
+/acp reset
+/acp off
+```
+
+Behavior:
+
+- `/acp on` binds the current conversation to a persistent ACPX session.
+- `/acp status` shows whether the conversation is bound and reports session status.
+- `/acp reset` recreates the ACPX session for the current conversation.
+- `/acp off` unbinds the conversation and closes the ACPX session.
+
 ## Configuration
 
 ```json5
@@ -114,6 +183,14 @@ openclaw message send --channel openzalo --target group:<groupId> --message "Hel
       enabled: true,
       profile: "default", // default: account id
       zcaBinary: "openzca", // or full path
+      acpx: {
+        enabled: true,
+        command: "/full/path/to/acpx", // or "acpx" if PATH is correct
+        agent: "claude", // e.g. claude | codex
+        cwd: "/Users/<you>/.openclaw/workspace",
+        permissionMode: "approve-all", // approve-all | approve-reads | deny-all
+        nonInteractivePermissions: "fail", // fail | deny
+      },
 
       // DM access: pairing | allowlist | open | disabled
       dmPolicy: "pairing",
@@ -186,6 +263,11 @@ channels:
     accounts:
       default:
         profile: default
+        acpx:
+          enabled: true
+          command: /full/path/to/acpx
+          agent: claude
+          cwd: /Users/<you>/.openclaw/workspace
       work:
         profile: work
         enabled: true
@@ -196,6 +278,12 @@ Profile resolution is per account. If `zcaBinary` is not set, plugin uses:
 1. `channels.openzalo[.accounts.<id>].zcaBinary`
 2. `OPENZCA_BINARY` env var
 3. `openzca`
+
+If `acpx` is not set, OpenZalo ACP-local uses:
+
+1. `channels.openzalo[.accounts.<id>].acpx.command`
+2. `OPENZALO_ACPX_COMMAND` env var
+3. `acpx`
 
 ## Target Format
 
@@ -227,6 +315,7 @@ Default safe media roots (under `OPENCLAW_STATE_DIR` or `CLAWDBOT_STATE_DIR`, fa
 ## Troubleshooting
 
 - `openzca not found`: install `openzca` or set `channels.openzalo.zcaBinary`.
+- `acpx command not found`: install `acpx` (for example `npm i -g acpx`) or set `channels.openzalo.acpx.command` to the absolute `acpx` path.
 - Auth check fails: run `openclaw channels login --channel openzalo` (or `openzca --profile <id> auth login`).
 - Group message dropped: verify `groupPolicy`, `groupAllowFrom`, and `groups.<groupId>` allowlist.
 - Group message dropped with allowlist configured: check `requireMention` and mention detection.
