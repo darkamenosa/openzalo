@@ -1,5 +1,6 @@
 import type { ReplyPayload, RuntimeEnv } from "openclaw/plugin-sdk";
 import type { CoreConfig, ResolvedOpenzaloAccount } from "../types.js";
+import { resolveOpenzaloStateDir } from "../state-dir.js";
 import {
   closeOpenzaloAcpxSession,
   ensureOpenzaloAcpxSession,
@@ -116,7 +117,7 @@ export async function handleOpenzaloAcpCommand(params: {
     return { handled: false };
   }
 
-  const stateDir = params.runtime.state.resolveStateDir(process.env);
+  const stateDir = resolveOpenzaloStateDir(process.env);
   const acpxConfig = resolveOpenzaloAcpxConfig({
     cfg: params.cfg,
     accountId: params.account.accountId,

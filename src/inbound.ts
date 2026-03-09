@@ -35,6 +35,7 @@ import {
   resolveOpenzaloDirectPeerId,
 } from "./normalize.js";
 import { getOpenzaloRuntime } from "./runtime.js";
+import { resolveOpenzaloStateDir } from "./state-dir.js";
 import { sendMediaOpenzalo, sendTextOpenzalo, sendTypingOpenzalo, type OpenzaloSendReceipt } from "./send.js";
 import {
   allowlistHasEntry,
@@ -554,7 +555,7 @@ export async function handleOpenzaloInbound(params: {
     }
   }
 
-  const stateDir = runtime.state.resolveStateDir(process.env);
+  const stateDir = resolveOpenzaloStateDir(process.env);
   const boundAcpBinding = await resolveOpenzaloAcpBinding({
     stateDir,
     accountId: account.accountId,

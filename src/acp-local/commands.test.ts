@@ -25,6 +25,18 @@ function makeRuntime(stateDir: string) {
   } as const;
 }
 
+function bindStateDirForTest(t: test.TestContext, stateDir: string): void {
+  const previous = process.env.OPENCLAW_STATE_DIR;
+  process.env.OPENCLAW_STATE_DIR = stateDir;
+  t.after(() => {
+    if (previous == null) {
+      delete process.env.OPENCLAW_STATE_DIR;
+      return;
+    }
+    process.env.OPENCLAW_STATE_DIR = previous;
+  });
+}
+
 function textOf(result: Awaited<ReturnType<typeof handleOpenzaloAcpCommand>>): string {
   if (!result.handled) {
     return "";
@@ -45,6 +57,7 @@ test("parseOpenzaloAcpCommand supports positional agent and cwd tokens", () => {
 
 test("handleOpenzaloAcpCommand rejects enabling ACP when disabled in config", async (t) => {
   const stateDir = await makeStateDir("openzalo-acp-commands-");
+  bindStateDirForTest(t, stateDir);
   t.after(async () => {
     await fsp.rm(stateDir, { recursive: true, force: true });
   });
@@ -75,6 +88,7 @@ test("handleOpenzaloAcpCommand rejects enabling ACP when disabled in config", as
 
 test("handleOpenzaloAcpCommand status reports disabled bound session metadata", async (t) => {
   const stateDir = await makeStateDir("openzalo-acp-commands-");
+  bindStateDirForTest(t, stateDir);
   t.after(async () => {
     await fsp.rm(stateDir, { recursive: true, force: true });
   });
@@ -114,6 +128,7 @@ test("handleOpenzaloAcpCommand status reports disabled bound session metadata", 
 
 test("handleOpenzaloAcpCommand off removes bindings even when ACPX is disabled", async (t) => {
   const stateDir = await makeStateDir("openzalo-acp-commands-");
+  bindStateDirForTest(t, stateDir);
   t.after(async () => {
     await fsp.rm(stateDir, { recursive: true, force: true });
   });
