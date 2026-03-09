@@ -47,6 +47,9 @@ function hasExplicitAccountConfig(config: OpenzaloAccountConfig | undefined): bo
   if (config.zcaBinary?.trim()) {
     return true;
   }
+  if (config.acpx && Object.keys(config.acpx).length > 0) {
+    return true;
+  }
   if (config.dmPolicy) {
     return true;
   }

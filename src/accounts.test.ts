@@ -36,3 +36,24 @@ test("resolveOpenzaloAccount ignores defaultAccount marker while merging config"
   assert.deepEqual(account.config.allowFrom, ["10001"]);
   assert.equal(account.profile, "work");
 });
+
+test("resolveOpenzaloAccount marks acpx-only config as explicit", () => {
+  const account = resolveOpenzaloAccount({
+    cfg: {
+      channels: {
+        openzalo: {
+          accounts: {
+            default: {
+              acpx: {
+                enabled: false,
+              },
+            },
+          },
+        },
+      },
+    },
+    accountId: "default",
+  });
+
+  assert.equal(account.configured, true);
+});

@@ -9,6 +9,7 @@ import type {
   MarkdownConfig,
   OpenClawConfig,
 } from "openclaw/plugin-sdk";
+import type { OpenzaloAcpxConfig } from "./acp-local/types.js";
 
 export type OpenzaloGroupConfig = {
   enabled?: boolean;
@@ -40,6 +41,7 @@ export type OpenzaloAccountConfig = {
   enabled?: boolean;
   profile?: string;
   zcaBinary?: string;
+  acpx?: OpenzaloAcpxConfig;
   dmPolicy?: DmPolicy;
   allowFrom?: Array<string | number>;
   groupPolicy?: GroupPolicy;

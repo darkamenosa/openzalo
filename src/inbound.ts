@@ -21,6 +21,12 @@ import {
   rememberOpenzaloMessage,
   resolveOpenzaloMessageRef,
 } from "./message-refs.js";
+import {
+  handleOpenzaloAcpCommand,
+  parseOpenzaloAcpCommand,
+  resolveOpenzaloAcpBinding,
+  runOpenzaloAcpBoundTurn,
+} from "./acp-local/index.js";
 import { resolveOpenzaloBoundSessionByTarget } from "./subagent-bindings.js";
 import {
   formatOpenzaloOutboundTarget,
@@ -368,6 +374,50 @@ async function deliverOpenzaloReply(params: {
   return receipts;
 }
 
+async function deliverAndRememberOpenzaloReply(params: {
+  payload: ReplyPayload;
+  target: string;
+  sessionKey: string;
+  account: ResolvedOpenzaloAccount;
+  cfg: CoreConfig;
+  runtime: RuntimeEnv;
+  statusSink?: (patch: { lastOutboundAt?: number }) => void;
+}): Promise<void> {
+  const receipts = await deliverOpenzaloReply(params);
+  if (receipts.length === 0) {
+    return;
+  }
+
+  const core = getOpenzaloRuntime();
+  const outboundParsedTarget = parseOpenzaloTarget(params.target);
+  for (const receipt of receipts) {
+    const remembered = rememberOpenzaloMessage({
+      accountId: params.account.accountId,
+      threadId: outboundParsedTarget.threadId,
+      isGroup: outboundParsedTarget.isGroup,
+      msgId: receipt.msgId,
+      cliMsgId: receipt.cliMsgId,
+      timestamp: Date.now(),
+      preview: receipt.textPreview,
+    });
+    if (!remembered?.shortId) {
+      continue;
+    }
+    core.system.enqueueSystemEvent(
+      buildOutboundMessageEventText({
+        shortId: remembered.shortId,
+        preview: remembered.preview,
+        msgId: remembered.msgId,
+        cliMsgId: remembered.cliMsgId,
+      }),
+      {
+        sessionKey: params.sessionKey,
+        contextKey: `openzalo:outbound:${params.target}:${remembered.msgId || remembered.cliMsgId || remembered.shortId}`,
+      },
+    );
+  }
+}
+
 export async function handleOpenzaloInbound(params: {
   message: OpenzaloInboundMessage;
   account: ResolvedOpenzaloAccount;
@@ -504,6 +554,12 @@ export async function handleOpenzaloInbound(params: {
     }
   }
 
+  const stateDir = runtime.state.resolveStateDir(process.env);
+  const boundAcpBinding = await resolveOpenzaloAcpBinding({
+    stateDir,
+    accountId: account.accountId,
+    conversationId: outboundTarget,
+  });
   const defaultRoute = core.channel.routing.resolveAgentRoute({
     cfg: cfg as OpenClawConfig,
     channel: CHANNEL_ID,
@@ -528,13 +584,18 @@ export async function handleOpenzaloInbound(params: {
         mainSessionKey: `agent:${boundAgentId}:main`,
       }
     : defaultRoute;
-  const mentionRegexes = core.channel.mentions.buildMentionRegexes(cfg as OpenClawConfig, route.agentId);
+  const mentionAgentId = boundAcpBinding?.agent || route.agentId;
+  const mentionRegexes = core.channel.mentions.buildMentionRegexes(
+    cfg as OpenClawConfig,
+    mentionAgentId,
+  );
   const commandBody = message.isGroup
     ? resolveOpenzaloCommandBody({
         rawBody,
         mentionRegexes,
       })
     : rawBody;
+  const localAcpCommand = parseOpenzaloAcpCommand(commandBody);
 
   const useAccessGroups = cfg.commands?.useAccessGroups !== false;
   const allowTextCommands = core.channel.commands.shouldHandleTextCommands({
@@ -557,7 +618,7 @@ export async function handleOpenzaloInbound(params: {
     hasControlCommand,
   });
 
-  if (message.isGroup && commandGate.shouldBlock) {
+  if (message.isGroup && (commandGate.shouldBlock || (localAcpCommand && !commandGate.commandAuthorized))) {
     logInboundDrop({
       log: (line) => runtime.log?.(line),
       channel: CHANNEL_ID,
@@ -592,8 +653,10 @@ export async function handleOpenzaloInbound(params: {
       })
     : false;
 
-  if (message.isGroup && requireMention && !wasMentioned) {
-    const bypassForCommand = hasControlCommand && allowTextCommands && commandGate.commandAuthorized;
+  if (message.isGroup && requireMention && !wasMentioned && !boundAcpBinding) {
+    const bypassForCommand =
+      ((hasControlCommand && allowTextCommands) || Boolean(localAcpCommand)) &&
+      commandGate.commandAuthorized;
     if (!bypassForCommand) {
       if (groupHistoryKey && groupHistoryLimit > 0) {
         const historyEntry = buildOpenzaloPendingGroupHistoryEntry({
@@ -628,14 +691,18 @@ export async function handleOpenzaloInbound(params: {
     : message.senderName
       ? `${message.senderName} id:${message.senderId}`
       : message.senderId;
+  const shouldRouteToBoundAcp = Boolean(boundAcpBinding) && !hasControlCommand;
+  const sessionKeyForContext = shouldRouteToBoundAcp ? boundAcpBinding.sessionKey : route.sessionKey;
+  const sessionAgentId =
+    shouldRouteToBoundAcp && boundAcpBinding ? boundAcpBinding.agent : route.agentId;
 
   const storePath = core.channel.session.resolveStorePath(cfg.session?.store, {
-    agentId: route.agentId,
+    agentId: sessionAgentId,
   });
   const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(cfg as OpenClawConfig);
   const previousTimestamp = core.channel.session.readSessionUpdatedAt({
     storePath,
-    sessionKey: route.sessionKey,
+    sessionKey: sessionKeyForContext,
   });
 
   let body = core.channel.reply.formatAgentEnvelope({
@@ -671,8 +738,6 @@ export async function handleOpenzaloInbound(params: {
       `openzalo: injecting pending group history thread=${message.threadId} entries=${pendingGroupHistory.length}`,
     );
   }
-
-  const outboundParsedTarget = parseOpenzaloTarget(outboundTarget);
 
   const mergedMediaPaths = dedupeStrings([
     ...pendingGroupHistory.flatMap((entry) => entry.mediaPaths),
@@ -758,8 +823,8 @@ export async function handleOpenzaloInbound(params: {
     MediaTypes: mergedMediaTypes.length > 0 ? mergedMediaTypes : undefined,
     From: message.isGroup ? `openzalo:group:${message.threadId}` : `openzalo:${message.senderId}`,
     To: outboundTarget,
-    SessionKey: route.sessionKey,
-    AccountId: route.accountId,
+    SessionKey: sessionKeyForContext,
+    AccountId: account.accountId,
     ChatType: message.isGroup ? "group" : "direct",
     ConversationLabel: peerLabel,
     SenderName: message.senderName,
@@ -785,21 +850,19 @@ export async function handleOpenzaloInbound(params: {
       message.isGroup ? commandGate.commandAuthorized : dmPolicy === "open" || senderAllowedDm,
   });
 
-  await core.channel.session.recordInboundSession({
-    storePath,
-    sessionKey: ctxPayload.SessionKey ?? route.sessionKey,
-    ctx: ctxPayload,
-    onRecordError: (err) => {
-      runtime.error?.(`openzalo: failed updating session meta: ${String(err)}`);
-    },
+  const acpCommandResult = await handleOpenzaloAcpCommand({
+    commandBody,
+    account,
+    cfg,
+    runtime,
+    conversationId: outboundTarget,
+    hasSubagentBinding: Boolean(boundSession),
   });
+  const activeSessionKey = acpCommandResult.handled
+    ? acpCommandResult.binding?.sessionKey || boundAcpBinding?.sessionKey || route.sessionKey
+    : (ctxPayload.SessionKey ?? route.sessionKey);
+  ctxPayload.SessionKey = activeSessionKey;
 
-  const { onModelSelected, ...prefixOptions } = createReplyPrefixOptions({
-    cfg: cfg as OpenClawConfig,
-    agentId: route.agentId,
-    channel: CHANNEL_ID,
-    accountId: account.accountId,
-  });
   const onReplyStartTyping =
     account.config.sendTypingIndicators === false
       ? undefined
@@ -814,6 +877,63 @@ export async function handleOpenzaloInbound(params: {
           }
         };
 
+  await core.channel.session.recordInboundSession({
+    storePath,
+    sessionKey: activeSessionKey,
+    ctx: ctxPayload,
+    onRecordError: (err) => {
+      runtime.error?.(`openzalo: failed updating session meta: ${String(err)}`);
+    },
+  });
+
+  if (acpCommandResult.handled) {
+    await deliverAndRememberOpenzaloReply({
+      payload: acpCommandResult.payload,
+      target: outboundTarget,
+      sessionKey: activeSessionKey,
+      account,
+      cfg,
+      runtime,
+      statusSink,
+    });
+    return;
+  }
+
+  if (shouldRouteToBoundAcp && boundAcpBinding) {
+    await onReplyStartTyping?.();
+    const acpPayload = await runOpenzaloAcpBoundTurn({
+      cfg,
+      runtime,
+      accountId: account.accountId,
+      binding: boundAcpBinding,
+      ctxPayload,
+    });
+    await deliverAndRememberOpenzaloReply({
+      payload: acpPayload,
+      target: outboundTarget,
+      sessionKey: boundAcpBinding.sessionKey,
+      account,
+      cfg,
+      runtime,
+      statusSink,
+    });
+    if (groupHistoryKey && pendingGroupHistory.length > 0) {
+      clearOpenzaloPendingGroupHistory(groupHistoryKey);
+      runtime.log?.(
+        `openzalo: cleared pending group history thread=${message.threadId} ` +
+          `consumed=${pendingGroupHistory.length} queuedFinal=1`,
+      );
+    }
+    return;
+  }
+
+  const { onModelSelected, ...prefixOptions } = createReplyPrefixOptions({
+    cfg: cfg as OpenClawConfig,
+    agentId: route.agentId,
+    channel: CHANNEL_ID,
+    accountId: account.accountId,
+  });
+
   const dispatchResult = await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: cfg as OpenClawConfig,
@@ -821,7 +941,7 @@ export async function handleOpenzaloInbound(params: {
       ...prefixOptions,
       onReplyStart: onReplyStartTyping,
       deliver: async (payload) => {
-        const receipts = await deliverOpenzaloReply({
+        await deliverAndRememberOpenzaloReply({
           payload,
           target: outboundTarget,
           sessionKey: route.sessionKey,
@@ -830,33 +950,6 @@ export async function handleOpenzaloInbound(params: {
           runtime,
           statusSink,
         });
-
-        for (const receipt of receipts) {
-          const remembered = rememberOpenzaloMessage({
-            accountId: account.accountId,
-            threadId: outboundParsedTarget.threadId,
-            isGroup: outboundParsedTarget.isGroup,
-            msgId: receipt.msgId,
-            cliMsgId: receipt.cliMsgId,
-            timestamp: Date.now(),
-            preview: receipt.textPreview,
-          });
-          if (!remembered?.shortId) {
-            continue;
-          }
-          core.system.enqueueSystemEvent(
-            buildOutboundMessageEventText({
-              shortId: remembered.shortId,
-              preview: remembered.preview,
-              msgId: remembered.msgId,
-              cliMsgId: remembered.cliMsgId,
-            }),
-            {
-              sessionKey: route.sessionKey,
-              contextKey: `openzalo:outbound:${outboundTarget}:${remembered.msgId || remembered.cliMsgId || remembered.shortId}`,
-            },
-          );
-        }
       },
       onError: (err, info) => {
         runtime.error?.(`openzalo ${info.kind} reply failed: ${String(err)}`);

@@ -3,6 +3,18 @@ import { z } from "zod";
 
 const allowFromEntry = z.union([z.string(), z.number()]);
 
+const openzaloAcpxSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    command: z.string().optional(),
+    agent: z.string().optional(),
+    cwd: z.string().optional(),
+    timeoutSeconds: z.number().positive().optional(),
+    permissionMode: z.enum(["approve-all", "approve-reads", "deny-all"]).optional(),
+    nonInteractivePermissions: z.enum(["deny", "fail"]).optional(),
+  })
+  .optional();
+
 const openzaloThreadBindingsSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -37,6 +49,7 @@ const openzaloAccountSchema = z.object({
   enabled: z.boolean().optional(),
   profile: z.string().optional(),
   zcaBinary: z.string().optional(),
+  acpx: openzaloAcpxSchema,
   markdown: MarkdownConfigSchema,
   dmPolicy: z.enum(["pairing", "allowlist", "open", "disabled"]).optional(),
   allowFrom: z.array(allowFromEntry).optional(),
