@@ -196,6 +196,7 @@ List members in the current group context:
 - If current group context is unavailable, pass `groupId`.
 - For native group mentions, fetch group members first, then use exact `id`, `displayName`, or `zaloName`.
 - Do not guess mentions. If the member match is ambiguous or missing, say so instead of sending a guessed tag.
+- If `list-group-members` still fails through the message tool path, suggest the direct CLI fallback: `openzca --profile <profile> group members <groupId> --json`.
 - `member-info` only needs `userId` (do not pass `to`).
 - `react` currently supports adding reaction, not removing.
 - Group `send` mention resolution fails on ambiguous member names instead of guessing.

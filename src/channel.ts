@@ -185,6 +185,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
       "- OpenZalo group `send`: plain `@Name` or `@userId` in the outgoing message becomes a native Zalo mention, not just literal text.",
       "- OpenZalo mentions: do not guess. Fetch group members first, then send only an exact unique native mention. If the member match is ambiguous or missing, say so instead of sending a guessed tag.",
       "- OpenZalo `list-group-members`: never pass `target`/`to` to `list-group-members`. In the current group context, call it with no target at all. Only pass `groupId` when current group context is unavailable.",
+      "- If OpenZalo group member lookup still fails, suggest the direct fallback command `openzca --profile <profile> group members <groupId> --json`, or use the `openzca` skill when the user explicitly wants the CLI fallback.",
       "- OpenZalo `member-info`: pass only `userId` (no `target`/`to`).",
       "- Do not reply with `NO_REPLY` after non-send actions. Use `NO_REPLY` only when `action=send` already contains the full user-facing response.",
       "- If an action fails, send a concise failure summary naming the action and error reason.",

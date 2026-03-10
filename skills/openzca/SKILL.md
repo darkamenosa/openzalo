@@ -45,6 +45,12 @@ If the request can be handled by OpenZalo `message` actions, use those instead o
 
 Use raw `openzca` only for unsupported workflows.
 
+Fallback: if OpenZalo `list-group-members` fails through the message tool path, use or suggest:
+
+```bash
+openzca --profile <profile> group members <groupId> --json
+```
+
 ## High-Value Advanced Commands
 
 ### Friend management
