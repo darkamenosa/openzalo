@@ -65,6 +65,7 @@ openzca --profile <profile> friend unblock <userId>
 ```bash
 openzca --profile <profile> group list --json
 openzca --profile <profile> group info <groupId>
+openzca --profile <profile> group members <groupId> --json
 openzca --profile <profile> group create "<name>" <userId1> <userId2>
 openzca --profile <profile> group settings <groupId> --help
 openzca --profile <profile> group add-deputy <groupId> <userId>
@@ -104,5 +105,6 @@ openzca account switch <name>
 ## Notes
 
 - Prefer stable IDs (`userId`, `groupId`, `msgId`, `cliMsgId`) over names.
+- For native mention prep, use `group members <groupId> --json` to resolve exact member ids/display names before sending `@Name`/`@userId`.
 - Use `--help` on subcommands for exact flags before executing admin operations.
 - If the user asks for repeated advanced workflows, consider adding a first-class OpenZalo action instead of repeated raw CLI calls.

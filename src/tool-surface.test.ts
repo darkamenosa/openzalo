@@ -17,12 +17,14 @@ test("OpenZalo agent prompt documents native group mention support", async () =>
   assert.match(channelSource, /native Zalo mention/i);
 });
 
-test("OpenZalo agent prompt removes list-group-members guidance and forbids guessed mentions", async () => {
+test("OpenZalo agent prompt removes list-group-members guidance, forbids guessed mentions, and points to openzca skill lookup", async () => {
   const channelSource = await readRepoFile("src/channel.ts");
 
   assert.doesNotMatch(channelSource, /list-group-members/i);
   assert.match(channelSource, /do not guess/i);
   assert.match(channelSource, /already known from context|provided by the user/i);
+  assert.match(channelSource, /openzca/i);
+  assert.match(channelSource, /skill/i);
 });
 
 test("OpenZalo skill doc explains how to send native group mentions", async () => {
@@ -34,22 +36,25 @@ test("OpenZalo skill doc explains how to send native group mentions", async () =
   assert.match(skillDoc, /native Zalo mention/i);
 });
 
-test("OpenZalo skill doc requires exact-known member identity before tagging", async () => {
+test("OpenZalo skill doc requires exact-known member identity before tagging and points to openzca skill lookup", async () => {
   const skillDoc = await readRepoFile("skills/openzalo/SKILL.md");
 
   assert.doesNotMatch(skillDoc, /list-group-members/i);
   assert.match(skillDoc, /do not guess/i);
   assert.match(skillDoc, /already have an exact unique member id or name/i);
+  assert.match(skillDoc, /openzca/i);
+  assert.match(skillDoc, /skill/i);
 });
 
-test("OpenZalo docs remove the openzca CLI member lookup fallback guidance", async () => {
+test("OpenZalo docs point native mention member lookup to the openzca skill", async () => {
   const channelSource = await readRepoFile("src/channel.ts");
   const skillDoc = await readRepoFile("skills/openzalo/SKILL.md");
   const openzcaSkillDoc = await readRepoFile("skills/openzca/SKILL.md");
 
-  assert.doesNotMatch(channelSource, /group members/i);
-  assert.doesNotMatch(skillDoc, /group members/i);
-  assert.doesNotMatch(openzcaSkillDoc, /fallback/i);
+  assert.match(channelSource, /openzca/i);
+  assert.match(skillDoc, /openzca/i);
+  assert.match(openzcaSkillDoc, /group members/i);
+  assert.match(openzcaSkillDoc, /native mention/i);
 });
 
 test("OpenZalo action surface no longer exposes list-group-members", async () => {

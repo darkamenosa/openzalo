@@ -183,7 +183,8 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
     messageToolHints: () => [
       "- OpenZalo action workflow: after `message` tool actions like `edit`, `unsend`, `react`, or `unreact`, always send a normal assistant reply that summarizes what you changed.",
       "- OpenZalo group `send`: plain `@Name` or `@userId` in the outgoing message becomes a native Zalo mention, not just literal text.",
-      "- OpenZalo mentions: do not guess. Only send an exact unique native mention when the correct member id or name is already known from context or provided by the user. If the match is ambiguous or missing, say so instead of sending a guessed tag.",
+      "- OpenZalo mentions: do not guess. Only send an exact unique native mention when the correct member id or name is already known from context or provided by the user.",
+      "- If exact member identity is missing for a native mention, use the bundled `openzca` skill to resolve group members first instead of asking the user for the id/name immediately.",
       "- OpenZalo `member-info`: pass only `userId` (no `target`/`to`).",
       "- Do not reply with `NO_REPLY` after non-send actions. Use `NO_REPLY` only when `action=send` already contains the full user-facing response.",
       "- If an action fails, send a concise failure summary naming the action and error reason.",

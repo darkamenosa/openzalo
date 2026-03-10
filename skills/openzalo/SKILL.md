@@ -24,6 +24,7 @@ Use the `message` tool with `channel: "openzalo"`.
   - Group: `group:<groupId>`
 - Group `send` supports native Zalo mentions in group chats: plain `@Name` or `@userId` in `message` is resolved by `openzca` into a real mention.
 - For native mentions, do not guess. Only tag when you already have an exact unique member id or name from context or the user.
+- If exact member identity is missing, switch to the bundled `openzca` skill and resolve the group member list there before sending the mention.
 - For message-specific actions (`react`, `edit`, `unsend`), provide `messageId`/`cliMsgId` when available.
 - If refs are missing, run `action: "read"` first to get recent messages and references.
 
@@ -174,7 +175,8 @@ Member lookups:
 ## Notes
 
 - Native group mentions require an exact unique member id or name already known from context or provided by the user.
-- Do not guess mentions. If the member match is ambiguous or missing, say so instead of sending a guessed tag.
+- Do not guess mentions.
+- If exact member identity is missing, use the bundled `openzca` skill to resolve `group members` first, then send the native mention.
 - `member-info` only needs `userId` (do not pass `to`).
 - `react` currently supports adding reaction, not removing.
 - Group `send` mention resolution fails on ambiguous member names instead of guessing.
