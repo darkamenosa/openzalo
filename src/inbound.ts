@@ -354,6 +354,9 @@ async function deliverOpenzaloReply(params: {
 
       let sent = false;
       try {
+        runtime.log?.(
+          `[${account.accountId}] openzalo outbound text chunk target=${target} sequence=${sequence} chunk=${JSON.stringify(chunk)}`,
+        );
         const receipt = await sendTextOpenzalo({
           cfg,
           account,
