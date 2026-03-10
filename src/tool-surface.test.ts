@@ -17,6 +17,15 @@ test("OpenZalo agent prompt documents native group mention support", async () =>
   assert.match(channelSource, /native Zalo mention/i);
 });
 
+test("OpenZalo agent prompt forbids target on list-group-members and forbids guessed mentions", async () => {
+  const channelSource = await readRepoFile("src/channel.ts");
+
+  assert.match(channelSource, /never pass `target`\/`to` to `list-group-members`/i);
+  assert.match(channelSource, /current group context/i);
+  assert.match(channelSource, /do not guess/i);
+  assert.match(channelSource, /fetch group members/i);
+});
+
 test("OpenZalo skill doc explains how to send native group mentions", async () => {
   const skillDoc = await readRepoFile("skills/openzalo/SKILL.md");
 
@@ -24,4 +33,13 @@ test("OpenZalo skill doc explains how to send native group mentions", async () =
   assert.match(skillDoc, /@userId/);
   assert.match(skillDoc, /list-group-members/);
   assert.match(skillDoc, /native Zalo mention/i);
+});
+
+test("OpenZalo skill doc requires current-group member lookup before tagging", async () => {
+  const skillDoc = await readRepoFile("skills/openzalo/SKILL.md");
+
+  assert.match(skillDoc, /never pass `target`\/`to` to `list-group-members`/i);
+  assert.match(skillDoc, /current group context/i);
+  assert.match(skillDoc, /do not guess/i);
+  assert.match(skillDoc, /fetch group members/i);
 });

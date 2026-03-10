@@ -122,6 +122,7 @@ openclaw message send --channel openzalo --target group:<groupId> --message "Hi 
 ```
 
 For group sends, plain `@Name` and `@userId` are forwarded to `openzca` and become native Zalo mentions. Use `list-group-members` first if you need exact member ids or names.
+For native mentions, do not guess. Fetch the current group members first and only tag when you have an exact unique match.
 
 ## ACPX (`/acp`) Support
 
