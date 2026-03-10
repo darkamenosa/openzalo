@@ -22,6 +22,7 @@ Use the `message` tool with `channel: "openzalo"`.
 - Prefer explicit targets:
   - DM: `user:<userId>` (or plain `<userId>`)
   - Group: `group:<groupId>`
+- Group `send` supports native Zalo mentions in group chats: plain `@Name` or `@userId` in `message` is resolved by `openzca` into a real mention.
 - For message-specific actions (`react`, `edit`, `unsend`), provide `messageId`/`cliMsgId` when available.
 - If refs are missing, run `action: "read"` first to get recent messages and references.
 
@@ -52,6 +53,17 @@ Send message:
   "channel": "openzalo",
   "to": "user:123456789",
   "message": "Hello from OpenClaw"
+}
+```
+
+Send group message with native mentions:
+
+```json
+{
+  "action": "send",
+  "channel": "openzalo",
+  "to": "group:987654321",
+  "message": "Hi @Alice Nguyen and @123456789"
 }
 ```
 
@@ -170,7 +182,8 @@ Member lookups:
 ## Notes
 
 - `list-group-members` works best with group context; otherwise pass `groupId`.
+- For native group mentions, use `list-group-members` to fetch exact `id`, `displayName`, and `zaloName` values before sending when needed.
 - `member-info` only needs `userId` (do not pass `to`).
 - `react` currently supports adding reaction, not removing.
+- Group `send` mention resolution fails on ambiguous member names instead of guessing.
 - Group policy and action gates may block some actions based on `channels.openzalo.*` config.
-

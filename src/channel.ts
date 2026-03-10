@@ -182,6 +182,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
   agentPrompt: {
     messageToolHints: () => [
       "- OpenZalo action workflow: after `message` tool actions like `edit`, `unsend`, `react`, or `unreact`, always send a normal assistant reply that summarizes what you changed.",
+      "- OpenZalo group `send`: plain `@Name` or `@userId` in the outgoing message becomes a native Zalo mention, not just literal text. Use `list-group-members` first when you need exact member ids or names; ambiguous names fail.",
       "- OpenZalo `list-group-members`: do not pass `target`/`to`. Use current group context, or pass `groupId` when context is unavailable.",
       "- OpenZalo `member-info`: pass only `userId` (no `target`/`to`).",
       "- Do not reply with `NO_REPLY` after non-send actions. Use `NO_REPLY` only when `action=send` already contains the full user-facing response.",

@@ -118,7 +118,10 @@ openclaw channels add --channel openzalo --account default
 ```bash
 openclaw message send --channel openzalo --target <userId> --message "Hello from OpenClaw"
 openclaw message send --channel openzalo --target group:<groupId> --message "Hello group"
+openclaw message send --channel openzalo --target group:<groupId> --message "Hi @Alice Nguyen and @123456789"
 ```
+
+For group sends, plain `@Name` and `@userId` are forwarded to `openzca` and become native Zalo mentions. Use `list-group-members` first if you need exact member ids or names.
 
 ## ACPX (`/acp`) Support
 
