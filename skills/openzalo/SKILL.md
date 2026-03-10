@@ -23,7 +23,7 @@ Use the `message` tool with `channel: "openzalo"`.
   - DM: `user:<userId>` (or plain `<userId>`)
   - Group: `group:<groupId>`
 - Group `send` supports native Zalo mentions in group chats: plain `@Name` or `@userId` in `message` is resolved by `openzca` into a real mention.
-- For native mentions, do not guess. Fetch group members first and only tag when you have an exact unique match.
+- For native mentions, do not guess. Only tag when you already have an exact unique member id or name from context or the user.
 - For message-specific actions (`react`, `edit`, `unsend`), provide `messageId`/`cliMsgId` when available.
 - If refs are missing, run `action: "read"` first to get recent messages and references.
 
@@ -42,7 +42,6 @@ Use the `message` tool with `channel: "openzalo"`.
 - `unpin`
 - `list-pins`
 - `member-info`
-- `list-group-members`
 
 ## Common Examples
 
@@ -172,31 +171,10 @@ Member lookups:
 }
 ```
 
-```json
-{
-  "action": "list-group-members",
-  "channel": "openzalo",
-  "groupId": "987654321"
-}
-```
-
-List members in the current group context:
-
-```json
-{
-  "action": "list-group-members",
-  "channel": "openzalo"
-}
-```
-
 ## Notes
 
-- Never pass `target`/`to` to `list-group-members`.
-- In the current group context, call `list-group-members` with no target at all.
-- If current group context is unavailable, pass `groupId`.
-- For native group mentions, fetch group members first, then use exact `id`, `displayName`, or `zaloName`.
+- Native group mentions require an exact unique member id or name already known from context or provided by the user.
 - Do not guess mentions. If the member match is ambiguous or missing, say so instead of sending a guessed tag.
-- If `list-group-members` still fails through the message tool path, suggest the direct CLI fallback: `openzca --profile <profile> group members <groupId> --json`.
 - `member-info` only needs `userId` (do not pass `to`).
 - `react` currently supports adding reaction, not removing.
 - Group `send` mention resolution fails on ambiguous member names instead of guessing.

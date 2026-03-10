@@ -121,8 +121,8 @@ openclaw message send --channel openzalo --target group:<groupId> --message "Hel
 openclaw message send --channel openzalo --target group:<groupId> --message "Hi @Alice Nguyen and @123456789"
 ```
 
-For group sends, plain `@Name` and `@userId` are forwarded to `openzca` and become native Zalo mentions. Use `list-group-members` first if you need exact member ids or names.
-For native mentions, do not guess. Fetch the current group members first and only tag when you have an exact unique match.
+For group sends, plain `@Name` and `@userId` are forwarded to `openzca` and become native Zalo mentions.
+For native mentions, do not guess. Only tag when you already have an exact unique member id or name from context or from the user.
 
 ## ACPX (`/acp`) Support
 
@@ -248,7 +248,7 @@ Behavior:
         groups: true, // rename/add/remove/leave
         pins: true, // pin/unpin/list-pins
         memberInfo: true, // member-info
-        groupMembers: true, // list-group-members (member id - name)
+        groupMembers: true, // reserved
       },
     },
   },

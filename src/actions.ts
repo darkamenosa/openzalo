@@ -30,7 +30,6 @@ const SUPPORTED_ACTIONS = new Set<ChannelMessageActionName>([
   "unpin",
   "list-pins",
   "member-info",
-  "list-group-members",
 ]);
 
 type OpenzcaRecentRow = {
@@ -354,9 +353,6 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
       const memberInfoEnabled = gate("memberInfo");
       if (memberInfoEnabled) {
         actions.add("member-info");
-      }
-      if (memberInfoEnabled || gate("groupMembers")) {
-        actions.add("list-group-members");
       }
     }
 
