@@ -1,6 +1,6 @@
 ---
 name: openzca
-description: Advanced Zalo operations through the openzca CLI for tasks not exposed by OpenZalo message actions (friend ops, advanced group admin, profile/account/cache management). Use only when explicitly requested.
+description: Advanced Zalo operations through the openzca CLI for tasks not exposed by OpenZalo message actions, including friend ops, advanced group admin, group polls, and profile/account/cache management. Use when the user explicitly asks for those workflows or when the OpenZalo skill routes there.
 metadata:
   {
     "openclaw":
@@ -45,6 +45,8 @@ If the request can be handled by OpenZalo `message` actions, use those instead o
 
 Use raw `openzca` only for unsupported workflows.
 
+Poll workflows are one of those unsupported areas in OpenZalo `message` actions. If the user asks to create, inspect, vote on, close, or share a Zalo poll, use `openzca`.
+
 ## High-Value Advanced Commands
 
 ### Friend management
@@ -74,6 +76,22 @@ openzca --profile <profile> group transfer <groupId> <newOwnerId>
 openzca --profile <profile> group pending <groupId> --json
 openzca --profile <profile> group review <groupId> <userId> <approve|deny>
 openzca --profile <profile> group disperse <groupId>
+```
+
+### Group polls
+
+```bash
+openzca --profile <profile> group poll create <groupId> --question "<question>" --option "<option 1>" --option "<option 2>"
+openzca --profile <profile> group poll detail <pollId>
+openzca --profile <profile> group poll vote <pollId> --option <optionId>
+openzca --profile <profile> group poll lock <pollId>
+openzca --profile <profile> group poll share <pollId>
+```
+
+Create supports optional flags:
+
+```bash
+--multi --allow-add-option --hide-vote-preview --anonymous --expire-ms <ms>
 ```
 
 ### Message flows not exposed in OpenZalo actions
@@ -106,5 +124,7 @@ openzca account switch <name>
 
 - Prefer stable IDs (`userId`, `groupId`, `msgId`, `cliMsgId`) over names.
 - For native mention prep, use `group members <groupId> --json` to resolve exact member ids/display names before sending `@Name`/`@userId`.
+- Polls are group-only. For poll creation, gather the target `groupId`, the question, and at least two options before running the command.
+- For poll voting, get the `pollId` and option ids first. If the user only describes the poll loosely, run `group poll detail <pollId>` after resolving the correct poll id.
 - Use `--help` on subcommands for exact flags before executing admin operations.
 - If the user asks for repeated advanced workflows, consider adding a first-class OpenZalo action instead of repeated raw CLI calls.
