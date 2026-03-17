@@ -323,6 +323,7 @@ function buildOpenzcaMediaArgs(params: {
   target: { threadId: string; isGroup: boolean };
   source: string;
   mediaCommand: MediaCommand;
+  message?: string;
 }): string[] {
   const { target, source, mediaCommand } = params;
   const args = ["msg", mediaCommand];
@@ -338,6 +339,10 @@ function buildOpenzcaMediaArgs(params: {
       args.push("--url", source);
     } else {
       args.push(source);
+    }
+    const caption = params.message?.trim();
+    if (mediaCommand === "video" && caption) {
+      args.push("--message", caption);
     }
   }
   if (target.isGroup) {
@@ -451,6 +456,7 @@ export async function sendMediaOpenzalo(
     target,
     source,
     mediaCommand,
+    message: text,
   });
   const sourceType = resolvedSource.sourceType;
 
@@ -492,6 +498,7 @@ export async function sendMediaOpenzalo(
           target,
           source,
           mediaCommand,
+          message: text,
         });
         result = await runOpenzcaAccountCommand({
           account,
@@ -513,7 +520,8 @@ export async function sendMediaOpenzalo(
     };
 
     const receipts: OpenzaloSendReceipt[] = [mediaReceipt];
-    if (text?.trim()) {
+    const captionSentInline = mediaCommand === "video" && Boolean(text?.trim());
+    if (text?.trim() && !captionSentInline) {
       const captionReceipt = await sendTextOpenzalo({
         cfg: options.cfg,
         account,
