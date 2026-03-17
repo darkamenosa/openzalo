@@ -1,6 +1,6 @@
 ---
 name: openzalo
-description: OpenZalo operations via the message tool (channel=openzalo): send/read/edit/unsend/react, pins, group member actions, and member lookups. Use when users ask to control Zalo chats from OpenClaw.
+description: Use when users ask to control Zalo chats from OpenClaw through the OpenZalo message tool, including text or media sends, reads, edits, unsends, reactions, pins, group member actions, and member lookups.
 metadata:
   {
     "openclaw":
@@ -22,6 +22,8 @@ Use the `message` tool with `channel: "openzalo"`.
 - Prefer explicit targets:
   - DM: `user:<userId>` (or plain `<userId>`)
   - Group: `group:<groupId>`
+- For media sends, keep `action: "send"` and provide exactly one of `mediaPath` or `mediaUrl`.
+- `.mp4` sends use native video delivery under the hood. If you also provide `message`, that caption stays attached to the video instead of being sent as a second text message.
 - Group `send` supports native Zalo mentions in group chats: plain `@Name` or `@userId` in `message` is resolved by `openzca` into a real mention.
 - For native mentions, do not guess. Only tag when you already have an exact unique member id or name from context or the user.
 - If exact member identity is missing, switch to the bundled `openzca` skill and resolve the group member list there before sending the mention.
@@ -74,6 +76,30 @@ Send group message with native mentions:
   "channel": "openzalo",
   "to": "group:987654321",
   "message": "Hi @Alice Nguyen and @123456789"
+}
+```
+
+Send video from a local file with inline caption:
+
+```json
+{
+  "action": "send",
+  "channel": "openzalo",
+  "to": "user:123456789",
+  "message": "Please review this clip",
+  "mediaPath": "/absolute/path/demo.mp4"
+}
+```
+
+Send media from a URL:
+
+```json
+{
+  "action": "send",
+  "channel": "openzalo",
+  "to": "group:987654321",
+  "message": "Reference file",
+  "mediaUrl": "https://example.com/demo.mp4"
 }
 ```
 
@@ -183,6 +209,8 @@ Member lookups:
 
 ## Notes
 
+- `send` supports plain text and single-attachment media sends through `mediaPath` or `mediaUrl`.
+- Video requests can stay on the OpenZalo `message` tool. `.mp4` sends preserve the caption on the video message itself.
 - Native group mentions require an exact unique member id or name already known from context or provided by the user.
 - Do not guess mentions.
 - If exact member identity is missing, use the bundled `openzca` skill to resolve `group members` first, then send the native mention.

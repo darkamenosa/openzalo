@@ -57,6 +57,18 @@ test("OpenZalo docs point native mention member lookup to the openzca skill", as
   assert.match(openzcaSkillDoc, /native mention/i);
 });
 
+test("OpenZalo skill docs describe media sends and native video caption behavior", async () => {
+  const skillDoc = await readRepoFile("skills/openzalo/SKILL.md");
+  const openzcaSkillDoc = await readRepoFile("skills/openzca/SKILL.md");
+
+  assert.match(skillDoc, /mediaPath/i);
+  assert.match(skillDoc, /mediaUrl/i);
+  assert.match(skillDoc, /\.mp4/i);
+  assert.match(skillDoc, /caption/i);
+  assert.match(openzcaSkillDoc, /msg video/i);
+  assert.match(openzcaSkillDoc, /--message/i);
+});
+
 test("OpenZalo action surface no longer exposes list-group-members", async () => {
   const actionsSource = await readRepoFile("src/actions.ts");
 

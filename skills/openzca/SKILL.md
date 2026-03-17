@@ -1,6 +1,6 @@
 ---
 name: openzca
-description: Advanced Zalo operations through the openzca CLI for tasks not exposed by OpenZalo message actions, including friend ops, advanced group admin, group polls, and profile/account/cache management. Use when the user explicitly asks for those workflows or when the OpenZalo skill routes there.
+description: Use when advanced Zalo workflows need the openzca CLI instead of OpenZalo message actions, including friend ops, advanced group admin, group polls, direct CLI media flows, and profile/account/cache management.
 metadata:
   {
     "openclaw":
@@ -39,6 +39,7 @@ openzca --profile <profile> auth status
 If the request can be handled by OpenZalo `message` actions, use those instead of raw CLI:
 
 - send/read/react/edit/unsend
+- single media sends through `action: "send"` with `mediaPath` or `mediaUrl`
 - renameGroup/addParticipant/removeParticipant/leaveGroup
 - pin/unpin/list-pins
 - member-info
@@ -98,6 +99,7 @@ Create supports optional flags:
 
 ```bash
 openzca --profile <profile> msg sticker <threadId> <stickerId>
+openzca --profile <profile> msg video <threadId> <file> --message "<caption>"
 openzca --profile <profile> msg link <threadId> <url>
 openzca --profile <profile> msg card <threadId> <contactId>
 openzca --profile <profile> msg forward "<message>" <target1> <target2>
@@ -123,6 +125,7 @@ openzca account switch <name>
 ## Notes
 
 - Prefer stable IDs (`userId`, `groupId`, `msgId`, `cliMsgId`) over names.
+- `msg video` accepts local files or `--url`; for a single `.mp4`, `openzca` attempts native video delivery and keeps `--message` as the inline video caption.
 - For native mention prep, use `group members <groupId> --json` to resolve exact member ids/display names before sending `@Name`/`@userId`.
 - Polls are group-only. For poll creation, gather the target `groupId`, the question, and at least two options before running the command.
 - For poll voting, get the `pollId` and option ids first. If the user only describes the poll loosely, run `group poll detail <pollId>` after resolving the correct poll id.
