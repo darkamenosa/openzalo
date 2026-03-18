@@ -34,6 +34,10 @@ import {
   parseOpenzaloTarget,
   resolveOpenzaloDirectPeerId,
 } from "./normalize.js";
+import {
+  doesOpenzaloCommandTargetDifferentBot,
+  resolveOpenzaloCommandBody,
+} from "./inbound-command.js";
 import { getOpenzaloRuntime } from "./runtime.js";
 import { resolveOpenzaloStateDir } from "./state-dir.js";
 import { sendMediaOpenzalo, sendTextOpenzalo, sendTypingOpenzalo, type OpenzaloSendReceipt } from "./send.js";
@@ -102,64 +106,6 @@ function buildOpenzaloPendingGroupHistoryEntry(params: {
     mediaUrls: params.message.mediaUrls.slice(),
     mediaTypes: params.message.mediaTypes.slice(),
   };
-}
-
-function resolveOpenzaloCommandBody(params: {
-  rawBody: string;
-  mentionRegexes: RegExp[];
-}): string {
-  const trimmed = params.rawBody.trim();
-  if (!trimmed) {
-    return "";
-  }
-  if (/^[/!]/.test(trimmed)) {
-    return trimmed;
-  }
-
-  let rest = trimmed;
-  let strippedMention = false;
-
-  for (let i = 0; i < 3; i += 1) {
-    let matched = false;
-    for (const mentionRegex of params.mentionRegexes) {
-      try {
-        const flags = mentionRegex.flags.includes("i") ? "i" : "";
-        const anchored = new RegExp(`^(?:${mentionRegex.source})(?:[\\s,:;|.-]+|$)`, flags);
-        if (!anchored.test(rest)) {
-          continue;
-        }
-        rest = rest.replace(anchored, "").trimStart();
-        strippedMention = true;
-        matched = true;
-        break;
-      } catch {
-        continue;
-      }
-    }
-    if (!matched) {
-      break;
-    }
-  }
-
-  if (!strippedMention) {
-    const genericMentionPrefix = rest.match(/^@\S+(?:[,:;|.-]+|\s+)/);
-    if (genericMentionPrefix) {
-      rest = rest.slice(genericMentionPrefix[0].length).trimStart();
-      strippedMention = true;
-    } else {
-      // Support attached mention commands like "@Bot/new" in group chats.
-      const attachedCommand = rest.match(/^@\S*([/!].*)$/);
-      if (attachedCommand?.[1]) {
-        rest = attachedCommand[1].trimStart();
-        strippedMention = true;
-      }
-    }
-  }
-
-  if (strippedMention && /^[/!]/.test(rest)) {
-    return rest;
-  }
-  return trimmed;
 }
 
 function buildOpenzaloCommandAuthorizers(params: {
@@ -594,9 +540,24 @@ export async function handleOpenzaloInbound(params: {
     ? resolveOpenzaloCommandBody({
         rawBody,
         mentionRegexes,
+        mentions: message.mentions,
+        botUserId,
       })
     : rawBody;
+  const commandTargetsDifferentBot = message.isGroup
+    ? doesOpenzaloCommandTargetDifferentBot({
+        commandBody,
+        mentionRegexes,
+        mentions: message.mentions,
+        botUserId,
+      })
+    : false;
   const localAcpCommand = parseOpenzaloAcpCommand(commandBody);
+
+  if (message.isGroup && commandTargetsDifferentBot) {
+    runtime.log?.(`openzalo: drop group ${message.threadId} (command targets different bot)`);
+    return;
+  }
 
   const useAccessGroups = cfg.commands?.useAccessGroups !== false;
   const allowTextCommands = core.channel.commands.shouldHandleTextCommands({
@@ -657,7 +618,8 @@ export async function handleOpenzaloInbound(params: {
   if (message.isGroup && requireMention && !wasMentioned && !boundAcpBinding) {
     const bypassForCommand =
       ((hasControlCommand && allowTextCommands) || Boolean(localAcpCommand)) &&
-      commandGate.commandAuthorized;
+      commandGate.commandAuthorized &&
+      !commandTargetsDifferentBot;
     if (!bypassForCommand) {
       if (groupHistoryKey && groupHistoryLimit > 0) {
         const historyEntry = buildOpenzaloPendingGroupHistoryEntry({

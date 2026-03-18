@@ -90,6 +90,14 @@ export type OpenzaloProbe = BaseProbeResult<string> & {
 
 export type OpenzcaRawPayload = Record<string, unknown>;
 
+export type OpenzaloInboundMention = {
+  uid: string;
+  pos?: number;
+  len?: number;
+  type?: number;
+  text?: string;
+};
+
 export type OpenzaloInboundMessage = {
   messageId: string;
   msgId?: string;
@@ -106,6 +114,7 @@ export type OpenzaloInboundMessage = {
   quoteCliMsgId?: string;
   quoteSender?: string;
   quoteText?: string;
+  mentions: OpenzaloInboundMention[];
   mentionIds: string[];
   mediaPaths: string[];
   mediaUrls: string[];

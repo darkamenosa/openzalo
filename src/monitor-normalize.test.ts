@@ -67,3 +67,23 @@ test("extracts mention ids from payload and metadata variants", () => {
     ["111", "555", "666", "777", "888", "999"].sort(),
   );
 });
+
+test("extracts normalized mention entities with spaced text", () => {
+  const payload = {
+    threadId: "1426870657825641161",
+    senderId: "1471383327500481391",
+    chatType: "group",
+    content: "@Hà Thư /new",
+    mentions: [{ uid: "bot-1", pos: 0, len: 8 }],
+  };
+
+  const normalized = normalizeOpenzcaInboundPayload(payload, "self-1");
+  assert.ok(normalized);
+  assert.equal(normalized?.mentions.length, 1);
+  assert.deepEqual(normalized?.mentions[0], {
+    uid: "bot-1",
+    pos: 0,
+    len: 8,
+    text: "@Hà Thư",
+  });
+});

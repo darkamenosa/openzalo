@@ -1,5 +1,5 @@
 import { normalizeOpenzaloId } from "./normalize.js";
-import type { OpenzaloInboundMessage, OpenzcaRawPayload } from "./types.js";
+import type { OpenzaloInboundMention, OpenzaloInboundMessage, OpenzcaRawPayload } from "./types.js";
 
 const toId = normalizeOpenzaloId;
 
@@ -37,29 +37,117 @@ function normalizeMentionUid(value: unknown): string | undefined {
   return undefined;
 }
 
-function collectMentionIds(params: {
+function parseOptionalInt(value: unknown): number | undefined {
+  const numeric =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isFinite(numeric)) {
+    return undefined;
+  }
+  return Math.trunc(numeric);
+}
+
+function looksLikeStructuredJsonString(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) {
+    return false;
+  }
+  const first = trimmed[0];
+  const last = trimmed[trimmed.length - 1];
+  return (first === "[" && last === "]") || (first === "{" && last === "}");
+}
+
+function buildInboundMention(params: {
+  value: Record<string, unknown>;
+  rawText: string;
+}): OpenzaloInboundMention | null {
+  const uid = normalizeMentionUid(
+    params.value.uid ?? params.value.userId ?? params.value.user_id ?? params.value.id,
+  );
+  if (!uid) {
+    return null;
+  }
+
+  const pos = parseOptionalInt(
+    params.value.pos ?? params.value.offset ?? params.value.start ?? params.value.index,
+  );
+  const len = parseOptionalInt(params.value.len ?? params.value.length);
+  const type = parseOptionalInt(params.value.type ?? params.value.kind);
+  let text =
+    (typeof params.value.text === "string" ? params.value.text.trim() : "") ||
+    (typeof params.value.label === "string" ? params.value.label.trim() : "") ||
+    (typeof params.value.name === "string" ? params.value.name.trim() : "") ||
+    (typeof pos === "number" &&
+    typeof len === "number" &&
+    len > 0 &&
+    pos >= 0 &&
+    pos < params.rawText.length
+      ? params.rawText.slice(pos, Math.min(params.rawText.length, pos + len)).trim()
+      : "");
+
+  if (!text) {
+    text = "";
+  }
+
+  return {
+    uid,
+    ...(typeof pos === "number" ? { pos } : {}),
+    ...(typeof len === "number" ? { len } : {}),
+    ...(typeof type === "number" ? { type } : {}),
+    ...(text ? { text } : {}),
+  };
+}
+
+function collectInboundMentions(params: {
   value: unknown;
-  sink: Set<string>;
+  sink: Map<string, OpenzaloInboundMention>;
+  rawText: string;
   depth: number;
 }): void {
   if (params.depth > 4 || params.value === undefined || params.value === null) {
     return;
   }
 
-  if (Array.isArray(params.value)) {
-    for (const item of params.value) {
-      collectMentionIds({
-        value: item,
+  if (typeof params.value === "string") {
+    if (!looksLikeStructuredJsonString(params.value)) {
+      const scalarId = normalizeMentionUid(params.value);
+      if (scalarId) {
+        params.sink.set(`${scalarId}|||`, { uid: scalarId });
+      }
+      return;
+    }
+    try {
+      const parsed = JSON.parse(params.value);
+      collectInboundMentions({
+        value: parsed,
         sink: params.sink,
+        rawText: params.rawText,
         depth: params.depth + 1,
       });
+    } catch {
+      // Ignore invalid JSON-like mention payloads.
     }
     return;
   }
 
   const scalarId = normalizeMentionUid(params.value);
   if (scalarId) {
-    params.sink.add(scalarId);
+    params.sink.set(`${scalarId}|||`, { uid: scalarId });
+    return;
+  }
+
+  if (Array.isArray(params.value)) {
+    for (const item of params.value) {
+      collectInboundMentions({
+        value: item,
+        sink: params.sink,
+        rawText: params.rawText,
+        depth: params.depth + 1,
+      });
+    }
     return;
   }
 
@@ -68,9 +156,13 @@ function collectMentionIds(params: {
     return;
   }
 
-  const inlineUid = normalizeMentionUid(record.uid ?? record.userId ?? record.user_id ?? record.id);
-  if (inlineUid) {
-    params.sink.add(inlineUid);
+  const mention = buildInboundMention({
+    value: record,
+    rawText: params.rawText,
+  });
+  if (mention) {
+    const key = `${mention.uid}|${mention.pos ?? ""}|${mention.len ?? ""}|${mention.type ?? ""}`;
+    params.sink.set(key, mention);
   }
 
   const nestedKeys = [
@@ -86,19 +178,21 @@ function collectMentionIds(params: {
     if (!(key in record)) {
       continue;
     }
-    collectMentionIds({
+    collectInboundMentions({
       value: record[key],
       sink: params.sink,
+      rawText: params.rawText,
       depth: params.depth + 1,
     });
   }
 }
 
-function extractMentionIds(params: {
+function extractInboundMentions(params: {
   payload: OpenzcaRawPayload;
   metadata: Record<string, unknown> | null;
-}): string[] {
-  const sink = new Set<string>();
+  rawText: string;
+}): OpenzaloInboundMention[] {
+  const sink = new Map<string, OpenzaloInboundMention>();
   const candidates: unknown[] = [
     params.payload.mentionIds,
     params.payload.mentions,
@@ -117,9 +211,24 @@ function extractMentionIds(params: {
   ];
 
   for (const candidate of candidates) {
-    collectMentionIds({ value: candidate, sink, depth: 0 });
+    collectInboundMentions({
+      value: candidate,
+      sink,
+      rawText: params.rawText,
+      depth: 0,
+    });
   }
 
+  return Array.from(sink.values());
+}
+
+function extractMentionIds(mentions: OpenzaloInboundMention[]): string[] {
+  const sink = new Set<string>();
+  for (const mention of mentions) {
+    if (mention.uid) {
+      sink.add(mention.uid);
+    }
+  }
   return Array.from(sink);
 }
 
@@ -318,7 +427,12 @@ export function normalizeOpenzcaInboundPayload(
         selfId,
       });
   const quote = extractQuoteContext({ payload, metadata });
-  const mentionIds = extractMentionIds({ payload, metadata });
+  const mentions = extractInboundMentions({
+    payload,
+    metadata,
+    rawText: text,
+  });
+  const mentionIds = extractMentionIds(mentions);
 
   return {
     messageId,
@@ -340,6 +454,7 @@ export function normalizeOpenzcaInboundPayload(
     quoteCliMsgId: quote.quoteCliMsgId,
     quoteSender: quote.quoteSender,
     quoteText: quote.quoteText,
+    mentions,
     mentionIds,
     mediaPaths,
     mediaUrls,
