@@ -1,5 +1,6 @@
 import type { RuntimeEnv } from "openclaw/plugin-sdk";
 import { handleOpenzaloInbound } from "./inbound.js";
+import { OPENZCA_LISTEN_ARGS } from "./listen-args.js";
 import { getOpenzaloRuntime } from "./runtime.js";
 import { runOpenzcaCommand, runOpenzcaStreaming } from "./openzca.js";
 import { normalizeOpenzcaInboundPayload } from "./monitor-normalize.js";
@@ -458,7 +459,9 @@ export async function monitorOpenzaloProvider(options: OpenzaloMonitorOptions): 
         await runOpenzcaStreaming({
           binary: account.zcaBinary,
           profile: account.profile,
-          args: ["listen", "--raw", "--keep-alive"],
+          // Let OpenZalo own restart policy. Supervised mode gives us lifecycle
+          // heartbeats so silence becomes a meaningful stuck-stream signal.
+          args: [...OPENZCA_LISTEN_ARGS],
           signal: streamAbort.signal,
           onStdoutLine: (line) => {
             if (line.trim()) {

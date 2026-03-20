@@ -302,7 +302,7 @@ Use `group:` for explicit group sends.
 
 ## Notes
 
-- Inbound listener uses `openzca listen --raw --keep-alive`.
+- Inbound listener uses `openzca listen --raw --supervised` so OpenZalo owns restart policy and receives lifecycle heartbeats.
 - Group messages require mention by default (`requireMention: true`) unless overridden.
 - Authorized slash/bang control commands can still be processed in groups when access policy allows.
 - Pairing mode sends approval code for unknown DM senders.
