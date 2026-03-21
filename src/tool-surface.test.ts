@@ -27,46 +27,48 @@ test("OpenZalo agent prompt removes list-group-members guidance, forbids guessed
   assert.match(channelSource, /skill/i);
 });
 
-test("OpenZalo skill doc explains how to send native group mentions", async () => {
-  const skillDoc = await readRepoFile("skills/openzalo/SKILL.md");
+test("OpenZalo skill doc prefers DB reads for summaries and history work", async () => {
+  const skillDoc = await readRepoFile("skills/openzca/SKILL.md");
 
-  assert.match(skillDoc, /@Name/);
-  assert.match(skillDoc, /@userId/);
-  assert.doesNotMatch(skillDoc, /`list-group-members`/);
-  assert.match(skillDoc, /native Zalo mention/i);
-});
-
-test("OpenZalo skill doc requires exact-known member identity before tagging and points to openzca skill lookup", async () => {
-  const skillDoc = await readRepoFile("skills/openzalo/SKILL.md");
-
-  assert.doesNotMatch(skillDoc, /list-group-members/i);
-  assert.match(skillDoc, /do not guess/i);
-  assert.match(skillDoc, /already have an exact unique member id or name/i);
-  assert.match(skillDoc, /openzca/i);
-  assert.match(skillDoc, /skill/i);
+  assert.match(skillDoc, /Prefer DB reads/i);
+  assert.match(skillDoc, /summarize/i);
+  assert.match(skillDoc, /db status --json/i);
+  assert.match(skillDoc, /db sync all --json/i);
+  assert.match(skillDoc, /db chat messages <chatId> --json/i);
+  assert.match(skillDoc, /--since 24h/i);
+  assert.match(skillDoc, /--from 2026-03-20/i);
+  assert.match(skillDoc, /--to 2026-03-22/i);
+  assert.match(skillDoc, /--oldest-first/i);
+  assert.match(skillDoc, /--all/i);
 });
 
 test("OpenZalo docs point native mention member lookup to the openzca skill", async () => {
   const channelSource = await readRepoFile("src/channel.ts");
-  const skillDoc = await readRepoFile("skills/openzalo/SKILL.md");
   const openzcaSkillDoc = await readRepoFile("skills/openzca/SKILL.md");
 
   assert.match(channelSource, /openzca/i);
-  assert.match(skillDoc, /openzca/i);
   assert.match(openzcaSkillDoc, /group members/i);
-  assert.match(openzcaSkillDoc, /native mention/i);
+  assert.match(openzcaSkillDoc, /@Name/i);
+  assert.match(openzcaSkillDoc, /@userId/i);
 });
 
-test("OpenZalo skill docs describe media sends and native video caption behavior", async () => {
-  const skillDoc = await readRepoFile("skills/openzalo/SKILL.md");
-  const openzcaSkillDoc = await readRepoFile("skills/openzca/SKILL.md");
+test("OpenZalo skill docs describe DB-backed reads and media CLI behavior", async () => {
+  const skillDoc = await readRepoFile("skills/openzca/SKILL.md");
 
-  assert.match(skillDoc, /mediaPath/i);
-  assert.match(skillDoc, /mediaUrl/i);
+  assert.match(skillDoc, /db group messages <groupId> --json/i);
+  assert.match(skillDoc, /db message get <msgIdOrCliMsgId> --json/i);
+  assert.match(skillDoc, /db friend messages <userId> --since 7d --json/i);
+  assert.match(skillDoc, /db chat <chatId> --limit 50 --json/i);
+  assert.match(skillDoc, /Do not mix:/i);
+  assert.match(skillDoc, /--since.*--from/i);
   assert.match(skillDoc, /\.mp4/i);
-  assert.match(skillDoc, /caption/i);
-  assert.match(openzcaSkillDoc, /msg video/i);
-  assert.match(openzcaSkillDoc, /--message/i);
+  assert.match(skillDoc, /db/i);
+  assert.match(skillDoc, /msg video/i);
+  assert.match(skillDoc, /--message/i);
+});
+
+test("OpenZalo no longer ships a separate openzalo skill doc", async () => {
+  await assert.rejects(readRepoFile("skills/openzalo/SKILL.md"));
 });
 
 test("OpenZalo action surface no longer exposes list-group-members", async () => {
