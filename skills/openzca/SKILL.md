@@ -186,6 +186,8 @@ Create supports optional flags:
 
 ```bash
 openzca --profile <profile> msg sticker <threadId> <stickerId>
+openzca --profile <profile> msg send <threadId> "<reply text>" --reply-id <msgIdOrCliMsgIdOrMessageUid>
+openzca --profile <profile> msg send <threadId> "<reply text>" --reply-message '<listenRawPayloadJson>'
 openzca --profile <profile> msg video <threadId> <file> --message "<caption>"
 openzca --profile <profile> msg link <threadId> <url>
 openzca --profile <profile> msg card <threadId> <contactId>
@@ -214,6 +216,10 @@ openzca account switch <name>
 - Prefer stable IDs (`userId`, `groupId`, `msgId`, `cliMsgId`) over names.
 - For summarize/search/history tasks, prefer `db` reads over live ad hoc fetches whenever the DB is enabled and synced.
 - If the DB is not ready, enable it and run the narrowest `db sync ...` command that fits the task.
+- For quote replies, prefer `msg send ... --reply-id <id>` when DB is enabled and the target message exists locally.
+- If DB is disabled or the caller already has inbound payload JSON from `listen --raw`, use `msg send ... --reply-message '<json>'` instead of trying to reconstruct a reply from ids alone.
+- `--reply-message` accepts either the original `zca-js` `message.data` object or the current `openzca listen --raw` payload.
+- Do not guess a reply target from text alone. Use a concrete stored id or a concrete inbound payload object.
 - For time-bounded summaries, default to `--since` for relative requests like "today", "last 24h", or "this week", and use `--from` plus `--to`/`--until` for exact boundary requests.
 - Prefer `--limit` over `--all` unless the user explicitly asks for full history.
 - Prefer `--oldest-first` when the output will be turned into a timeline or chronological summary.
