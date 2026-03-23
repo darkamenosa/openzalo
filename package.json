@@ -1,6 +1,6 @@
 {
-  "name": "@openclaw/openzalo",
-  "version": "2026.3.23",
+  "name": "@darkamenosa/openzalo",
+  "version": "2026.3.24",
   "description": "OpenClaw OpenZalo channel plugin (personal account via openzca CLI)",
   "type": "module",
   "scripts": {
@@ -11,6 +11,14 @@
   },
   "devDependencies": {
     "tsx": "^4.20.5"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.3.23"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
   },
   "openclaw": {
     "extensions": [
@@ -35,9 +43,13 @@
       "quickstartAllowFrom": true
     },
     "install": {
-      "npmSpec": "@openclaw/openzalo",
+      "npmSpec": "@darkamenosa/openzalo",
       "localPath": "extensions/openzalo",
-      "defaultChoice": "local"
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.3.23"
+    },
+    "release": {
+      "publishToNpm": true
     }
   }
 }
