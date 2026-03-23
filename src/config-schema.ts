@@ -1,7 +1,30 @@
-import { MarkdownConfigSchema, ToolPolicySchema } from "../api.js";
 import { z } from "zod";
 
 const allowFromEntry = z.union([z.string(), z.number()]);
+const markdownTableModeSchema = z.enum(["off", "bullets", "code"]);
+const markdownConfigSchema = z
+  .object({
+    tables: markdownTableModeSchema.optional(),
+  })
+  .strict()
+  .optional();
+const toolPolicySchema = z
+  .object({
+    allow: z.array(z.string()).optional(),
+    alsoAllow: z.array(z.string()).optional(),
+    deny: z.array(z.string()).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.allow && value.allow.length > 0 && value.alsoAllow && value.alsoAllow.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "tools policy cannot set both allow and alsoAllow in the same scope (merge alsoAllow into allow, or remove allow and use profile + alsoAllow)",
+      });
+    }
+  })
+  .optional();
 
 const openzaloAcpxSchema = z
   .object({
@@ -38,8 +61,8 @@ const openzaloGroupConfigSchema = z.object({
   enabled: z.boolean().optional(),
   requireMention: z.boolean().optional(),
   allowFrom: z.array(allowFromEntry).optional(),
-  tools: ToolPolicySchema,
-  toolsBySender: z.record(z.string(), ToolPolicySchema).optional(),
+  tools: toolPolicySchema,
+  toolsBySender: z.record(z.string(), toolPolicySchema).optional(),
   skills: z.array(z.string()).optional(),
   systemPrompt: z.string().optional(),
 });
@@ -50,7 +73,7 @@ const openzaloAccountSchema = z.object({
   profile: z.string().optional(),
   zcaBinary: z.string().optional(),
   acpx: openzaloAcpxSchema,
-  markdown: MarkdownConfigSchema,
+  markdown: markdownConfigSchema,
   dmPolicy: z.enum(["pairing", "allowlist", "open", "disabled"]).optional(),
   allowFrom: z.array(allowFromEntry).optional(),
   groupPolicy: z.enum(["open", "disabled", "allowlist"]).optional(),

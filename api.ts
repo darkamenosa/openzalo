@@ -5,11 +5,6 @@ export type {
   ChannelMessageActionName,
   ChannelStatusIssue,
 } from "openclaw/plugin-sdk/channel-contract";
-export {
-  MarkdownConfigSchema,
-  ToolPolicySchema,
-  buildChannelConfigSchema,
-} from "openclaw/plugin-sdk/channel-config-schema";
 export { logInboundDrop } from "openclaw/plugin-sdk/channel-inbound";
 export { createChannelPairingController } from "openclaw/plugin-sdk/channel-pairing";
 export { createChannelReplyPipeline } from "openclaw/plugin-sdk/channel-reply-pipeline";
@@ -18,6 +13,7 @@ export { resolveControlCommandGate } from "openclaw/plugin-sdk/command-auth";
 export {
   DEFAULT_ACCOUNT_ID,
   applyAccountNameToChannelSection,
+  buildChannelConfigSchema,
   defineChannelPluginEntry,
   deleteAccountFromConfigSection,
   formatPairingApproveHint,
