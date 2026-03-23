@@ -1,19 +1,15 @@
-import type { ChannelPlugin, OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
+import { defineChannelPluginEntry } from "./api.js";
 import { openzaloPlugin } from "./src/channel.js";
 import { setOpenzaloRuntime } from "./src/runtime.js";
 import { registerOpenzaloSubagentHooks } from "./src/subagent-hooks.js";
 
-const plugin = {
+export default defineChannelPluginEntry({
   id: "openzalo",
   name: "OpenZalo",
   description: "OpenZalo channel plugin (personal account via openzca CLI)",
-  configSchema: emptyPluginConfigSchema(),
-  register(api: OpenClawPluginApi) {
-    setOpenzaloRuntime(api.runtime);
-    api.registerChannel({ plugin: openzaloPlugin as ChannelPlugin });
+  plugin: openzaloPlugin,
+  setRuntime: setOpenzaloRuntime,
+  registerFull(api) {
     registerOpenzaloSubagentHooks(api);
   },
-};
-
-export default plugin;
+});

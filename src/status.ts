@@ -1,4 +1,8 @@
-import type { ChannelAccountSnapshot, ChannelAccountState, ChannelStatusIssue } from "openclaw/plugin-sdk";
+import type {
+  ChannelAccountSnapshot,
+  ChannelAccountState,
+  ChannelStatusIssue,
+} from "../api.js";
 
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;

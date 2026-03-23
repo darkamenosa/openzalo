@@ -1,4 +1,4 @@
-import type { ReplyPayload, RuntimeEnv } from "openclaw/plugin-sdk";
+import type { ReplyPayload, RuntimeEnv } from "../../api.js";
 import type { CoreConfig, ResolvedOpenzaloAccount } from "../types.js";
 import { resolveOpenzaloStateDir } from "../state-dir.js";
 import {

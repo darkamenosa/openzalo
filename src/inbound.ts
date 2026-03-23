@@ -1,12 +1,12 @@
 import {
-  createScopedPairingAccess,
-  createReplyPrefixOptions,
+  createChannelPairingController,
+  createChannelReplyPipeline,
   logInboundDrop,
   resolveControlCommandGate,
   type OpenClawConfig,
   type ReplyPayload,
   type RuntimeEnv,
-} from "openclaw/plugin-sdk";
+} from "../api.js";
 import {
   appendOpenzaloPendingGroupHistoryEntry,
   buildOpenzaloPendingGroupHistoryKey,
@@ -414,7 +414,7 @@ export async function handleOpenzaloInbound(params: {
 
   const configAllowFrom = normalizeAllowlist(account.config.allowFrom);
   const configGroupAllowFrom = normalizeAllowlist(account.config.groupAllowFrom);
-  const pairing = createScopedPairingAccess({
+  const pairing = createChannelPairingController({
     core,
     channel: CHANNEL_ID,
     accountId: account.accountId,
@@ -890,7 +890,7 @@ export async function handleOpenzaloInbound(params: {
     return;
   }
 
-  const { onModelSelected, ...prefixOptions } = createReplyPrefixOptions({
+  const { onModelSelected, ...replyPipeline } = createChannelReplyPipeline({
     cfg: cfg as OpenClawConfig,
     agentId: route.agentId,
     channel: CHANNEL_ID,
@@ -901,7 +901,7 @@ export async function handleOpenzaloInbound(params: {
     ctx: ctxPayload,
     cfg: cfg as OpenClawConfig,
     dispatcherOptions: {
-      ...prefixOptions,
+      ...replyPipeline,
       onReplyStart: onReplyStartTyping,
       deliver: async (payload) => {
         await deliverAndRememberOpenzaloReply({

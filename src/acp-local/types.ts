@@ -1,4 +1,4 @@
-import type { ReplyPayload } from "openclaw/plugin-sdk";
+import type { ReplyPayload } from "../../api.js";
 
 export const OPENZALO_ACPX_PERMISSION_MODES = [
   "approve-all",

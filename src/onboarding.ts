@@ -1,18 +1,15 @@
-import type {
-  ChannelOnboardingAdapter,
-  ChannelOnboardingDmPolicy,
-  DmPolicy,
-  OpenClawConfig,
-  WizardPrompter,
-} from "openclaw/plugin-sdk";
 import {
+  type ChannelSetupDmPolicy,
+  type DmPolicy,
+  type OpenClawConfig,
+  type WizardPrompter,
   DEFAULT_ACCOUNT_ID,
   addWildcardAllowFrom,
   formatDocsLink,
   mergeAllowFromEntries,
   normalizeAccountId,
   promptAccountId,
-} from "openclaw/plugin-sdk";
+} from "../api.js";
 import {
   listOpenzaloAccountIds,
   resolveDefaultOpenzaloAccountId,
@@ -21,6 +18,31 @@ import {
 import { normalizeOpenzaloAllowEntry } from "./normalize.js";
 
 const channel = "openzalo" as const;
+
+type OpenzaloAccountOverrides = Partial<Record<typeof channel, string>>;
+type OpenzaloOnboardingStatus = {
+  channel: typeof channel;
+  configured: boolean;
+  statusLines: string[];
+  selectionHint?: string;
+  quickstartScore?: number;
+};
+type OpenzaloOnboardingAdapter = {
+  channel: typeof channel;
+  getStatus: (ctx: {
+    cfg: OpenClawConfig;
+    options?: unknown;
+    accountOverrides: OpenzaloAccountOverrides;
+  }) => Promise<OpenzaloOnboardingStatus>;
+  configure: (ctx: {
+    cfg: OpenClawConfig;
+    prompter: WizardPrompter;
+    accountOverrides: OpenzaloAccountOverrides;
+    shouldPromptAccountIds: boolean;
+  }) => Promise<{ cfg: OpenClawConfig; accountId?: string }>;
+  dmPolicy?: ChannelSetupDmPolicy;
+  disable?: (cfg: OpenClawConfig) => OpenClawConfig;
+};
 
 function setOpenzaloDmPolicy(cfg: OpenClawConfig, dmPolicy: DmPolicy): OpenClawConfig {
   const allowFrom =
@@ -126,7 +148,7 @@ async function promptOpenzaloAllowFrom(params: {
   return setOpenzaloAllowFrom(params.cfg, accountId, unique);
 }
 
-const dmPolicy: ChannelOnboardingDmPolicy = {
+const dmPolicy: ChannelSetupDmPolicy = {
   label: "OpenZalo",
   channel,
   policyKey: "channels.openzalo.dmPolicy",
@@ -178,7 +200,7 @@ function setOpenzaloProfileAndBinary(params: {
   };
 }
 
-export const openzaloOnboardingAdapter: ChannelOnboardingAdapter = {
+export const openzaloOnboardingAdapter: OpenzaloOnboardingAdapter = {
   channel,
   getStatus: async ({ cfg }) => {
     const configured = listOpenzaloAccountIds(cfg).some((accountId) => {

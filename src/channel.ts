@@ -9,7 +9,7 @@ import {
   PAIRING_APPROVED_MESSAGE,
   setAccountEnabledInConfigSection,
   type ChannelPlugin,
-} from "openclaw/plugin-sdk";
+} from "../api.js";
 import { listOpenzaloDirectoryGroups, listOpenzaloDirectoryPeers, listOpenzaloDirectorySelf } from "./directory.js";
 import { handleOpenzaloInbound } from "./inbound.js";
 import { monitorOpenzaloProvider } from "./monitor.js";

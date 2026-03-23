@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "../api.js";
 import { resolveOpenzaloAccount } from "./accounts.js";
 import {
   bindOpenzaloSubagentSession,

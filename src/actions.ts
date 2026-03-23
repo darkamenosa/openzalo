@@ -5,7 +5,7 @@ import {
   readStringParam,
   type ChannelMessageActionAdapter,
   type ChannelMessageActionName,
-} from "openclaw/plugin-sdk";
+} from "../api.js";
 import { listEnabledOpenzaloAccounts, resolveOpenzaloAccount } from "./accounts.js";
 import {
   getLatestOpenzaloMessageForThread,

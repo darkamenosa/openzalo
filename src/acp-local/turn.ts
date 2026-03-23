@@ -1,4 +1,4 @@
-import type { ReplyPayload, RuntimeEnv } from "openclaw/plugin-sdk";
+import type { ReplyPayload, RuntimeEnv } from "../../api.js";
 import { ensureOpenzaloAcpxSession, promptOpenzaloAcpxSession } from "./client.js";
 import { resolveOpenzaloAcpxConfig } from "./config.js";
 import type { OpenzaloAcpBindingRecord } from "./types.js";

@@ -1,4 +1,4 @@
-import type { RuntimeEnv } from "openclaw/plugin-sdk";
+import type { RuntimeEnv } from "../api.js";
 import { handleOpenzaloInbound } from "./inbound.js";
 import { OPENZCA_LISTEN_ARGS } from "./listen-args.js";
 import { getOpenzaloRuntime } from "./runtime.js";

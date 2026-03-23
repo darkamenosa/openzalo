@@ -8,7 +8,7 @@ import type {
   GroupToolPolicyConfig,
   MarkdownConfig,
   OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "../api.js";
 import type { OpenzaloAcpxConfig } from "./acp-local/types.js";
 
 export type OpenzaloGroupConfig = {
