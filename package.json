@@ -16,6 +16,7 @@
     "extensions": [
       "./index.ts"
     ],
+    "setupEntry": "./setup-entry.ts",
     "channel": {
       "id": "openzalo",
       "label": "OpenZalo",
