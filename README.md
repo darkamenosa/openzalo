@@ -1,4 +1,4 @@
-# @darkamenosa/openzalo
+# @tuyenhx/openzalo
 
 OpenClaw channel plugin for Zalo personal accounts via `openzca` CLI.
 
@@ -8,7 +8,7 @@ OpenClaw channel plugin for Zalo personal accounts via `openzca` CLI.
 
 - Plugin id: `openzalo`
 - Channel id: `openzalo`
-- Package name: `@darkamenosa/openzalo`
+- Package name: `@tuyenhx/openzalo`
 - Required external binary: `openzca`
 - Optional external binary for `/acp` support: `acpx`
 
@@ -58,16 +58,16 @@ acpx --help
 
 ## Install (npm)
 
-Use this after `@darkamenosa/openzalo` is published:
+Use this after `@tuyenhx/openzalo` is published:
 
 ```bash
-openclaw plugins install @darkamenosa/openzalo
+openclaw plugins install @tuyenhx/openzalo
 ```
 
 To force ClawHub as the source once the package is listed there:
 
 ```bash
-openclaw plugins install clawhub:@darkamenosa/openzalo
+openclaw plugins install clawhub:@tuyenhx/openzalo
 ```
 
 ## Install (local checkout)
@@ -90,7 +90,7 @@ Restart Gateway after installation.
 
 - OpenClaw plugin installs can resolve from ClawHub or npm.
 - Newer `clawhub` CLI builds can publish native plugin packages with `clawhub package publish`.
-- To distribute this plugin, publish the package itself; users can then install it with `openclaw plugins install @darkamenosa/openzalo` or `openclaw plugins install clawhub:@darkamenosa/openzalo` when available there.
+- To distribute this plugin, publish the package itself; users can then install it with `openclaw plugins install @tuyenhx/openzalo` or `openclaw plugins install clawhub:@tuyenhx/openzalo` when available there.
 - The bundled `skills/openzca` skill can be published separately with the `clawhub` CLI if you want it discoverable as a standalone skill too.
 
 ## Quick Start

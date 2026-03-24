@@ -1,6 +1,6 @@
 {
-  "name": "@darkamenosa/openzalo",
-  "version": "2026.3.25",
+  "name": "@tuyenhx/openzalo",
+  "version": "2026.3.26",
   "description": "OpenClaw OpenZalo channel plugin (personal account via openzca CLI)",
   "type": "module",
   "scripts": {
@@ -43,7 +43,7 @@
       "quickstartAllowFrom": true
     },
     "install": {
-      "npmSpec": "@darkamenosa/openzalo",
+      "npmSpec": "@tuyenhx/openzalo",
       "localPath": "extensions/openzalo",
       "defaultChoice": "npm",
       "minHostVersion": ">=2026.3.23"
