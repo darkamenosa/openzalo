@@ -185,6 +185,8 @@ Create supports optional flags:
 ### Message flows not exposed in OpenZalo actions
 
 ```bash
+openzca --profile <profile> msg analyze-text <threadId> "<reply text>" --json
+openzca --profile <profile> msg analyze-text <threadId> "<reply text>" --group --json
 openzca --profile <profile> msg sticker <threadId> <stickerId>
 openzca --profile <profile> msg send <threadId> "<reply text>" --reply-id <msgIdOrCliMsgIdOrMessageUid>
 openzca --profile <profile> msg send <threadId> "<reply text>" --reply-message '<listenRawPayloadJson>'
@@ -196,6 +198,25 @@ openzca --profile <profile> msg delete <msgId> <cliMsgId> <uidFrom> <threadId>
 ```
 
 Add `--group` when operating on group threads.
+
+Before sending a long or heavily formatted message, prefer `msg analyze-text ... --json` first.
+
+Use the analysis to judge the built Zalo payload, not just the raw character count. In particular:
+
+- `renderedTextLength` is the post-formatting message text length
+- `styleCount` is how many styled ranges the payload carries
+- `textPropertiesLength` is the serialized style payload size
+- `requestParamsLengthEstimate` is the best estimate of the final request payload size
+- `sendPath` tells you whether the message is expected to go through `sms`, `sendmsg`, or `mention`
+
+Use `msg analyze-text` especially for:
+
+- long bullet lists
+- replies with many markdown lines
+- messages with many mentions
+- cases where `msg send` failed with a generic unknown error
+
+If the analyzer shows a large style payload, split on paragraph or list boundaries before `msg send`. Do not assume a message is safe just because the raw text is short.
 
 ### Profile/account/cache operations
 
@@ -225,6 +246,8 @@ openzca account switch <name>
 - Prefer `--oldest-first` when the output will be turned into a timeline or chronological summary.
 - `msg video` accepts local files or `--url`; for a single `.mp4`, `openzca` attempts native video delivery and keeps `--message` as the inline video caption.
 - For native mention prep, use `group members <groupId> --json` to resolve exact member ids/display names before sending `@Name`/`@userId`.
+- For formatted replies, use `msg analyze-text ... --json` before `msg send` when payload expansion might matter. This is more reliable than raw-length chunking because markdown lists and styles can expand into large `textProperties`.
+- If `msg send` fails with a generic transport error, re-run `msg analyze-text` on the exact text that failed and split on logical boundaries before retrying.
 - Polls are group-only. For poll creation, gather the target `groupId`, the question, and at least two options before running the command.
 - For poll voting, get the `pollId` and option ids first. If the user only describes the poll loosely, run `group poll detail <pollId>` after resolving the correct poll id.
 - Use `--help` on subcommands for exact flags before executing admin operations.
