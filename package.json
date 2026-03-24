@@ -1,6 +1,6 @@
 {
   "name": "@darkamenosa/openzalo",
-  "version": "2026.3.24",
+  "version": "2026.3.25",
   "description": "OpenClaw OpenZalo channel plugin (personal account via openzca CLI)",
   "type": "module",
   "scripts": {
