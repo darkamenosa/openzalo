@@ -322,10 +322,10 @@ async function resolveActionMessageRefs(params: {
 }
 
 export const openzaloMessageActions: ChannelMessageActionAdapter = {
-  listActions: ({ cfg }) => {
+  describeMessageTool: ({ cfg }) => {
     const accounts = listEnabledOpenzaloAccounts(cfg as CoreConfig).filter((account) => account.configured);
     if (accounts.length === 0) {
-      return [];
+      return null;
     }
     const actions = new Set<ChannelMessageActionName>([]);
 
@@ -356,7 +356,10 @@ export const openzaloMessageActions: ChannelMessageActionAdapter = {
       }
     }
 
-    return Array.from(actions);
+    return {
+      actions: Array.from(actions),
+      capabilities: [],
+    };
   },
   supportsAction: ({ action }) => SUPPORTED_ACTIONS.has(action),
   handleAction: async ({ action, params, cfg, accountId, toolContext }) => {

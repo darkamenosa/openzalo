@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { openzaloMessageActions } from "./actions.ts";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
@@ -76,4 +77,9 @@ test("OpenZalo action surface no longer exposes list-group-members", async () =>
 
   assert.doesNotMatch(actionsSource, /actions\.add\("list-group-members"\)/);
   assert.doesNotMatch(actionsSource, /"list-group-members",\n\]/);
+});
+
+test("OpenZalo actions export describeMessageTool for shared message discovery", () => {
+  assert.equal(typeof openzaloMessageActions.describeMessageTool, "function");
+  assert.equal("listActions" in openzaloMessageActions, false);
 });
