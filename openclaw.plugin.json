@@ -1,6 +1,8 @@
 {
   "id": "openzalo",
-  "channels": ["openzalo"],
+  "channels": [
+    "openzalo"
+  ],
   "channelConfigs": {
     "openzalo": {
       "label": "OpenZalo",
@@ -9,25 +11,51 @@
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "enabled": { "type": "boolean" },
-          "profile": { "type": "string" },
-          "zcaBinary": { "type": "string" },
+          "name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "zcaBinary": {
+            "type": "string"
+          },
           "acpx": {
             "type": "object",
             "properties": {
-              "enabled": { "type": "boolean" },
-              "command": { "type": "string" },
-              "agent": { "type": "string" },
-              "cwd": { "type": "string" },
-              "timeoutSeconds": { "type": "number", "exclusiveMinimum": 0 },
+              "enabled": {
+                "type": "boolean"
+              },
+              "command": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "timeoutSeconds": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
               "permissionMode": {
                 "type": "string",
-                "enum": ["approve-all", "approve-reads", "deny-all"]
+                "enum": [
+                  "approve-all",
+                  "approve-reads",
+                  "deny-all"
+                ]
               },
               "nonInteractivePermissions": {
                 "type": "string",
-                "enum": ["deny", "fail"]
+                "enum": [
+                  "deny",
+                  "fail"
+                ]
               }
             },
             "additionalProperties": false
@@ -37,29 +65,56 @@
             "properties": {
               "tables": {
                 "type": "string",
-                "enum": ["off", "bullets", "code"]
+                "enum": [
+                  "off",
+                  "bullets",
+                  "code"
+                ]
               }
             },
             "additionalProperties": false
           },
           "dmPolicy": {
             "type": "string",
-            "enum": ["pairing", "allowlist", "open", "disabled"]
+            "enum": [
+              "pairing",
+              "allowlist",
+              "open",
+              "disabled"
+            ]
           },
           "allowFrom": {
             "type": "array",
             "items": {
-              "anyOf": [{ "type": "string" }, { "type": "number" }]
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ]
             }
           },
           "groupPolicy": {
             "type": "string",
-            "enum": ["open", "disabled", "allowlist"]
+            "enum": [
+              "open",
+              "disabled",
+              "allowlist"
+            ]
           },
           "groupAllowFrom": {
             "type": "array",
             "items": {
-              "anyOf": [{ "type": "string" }, { "type": "number" }]
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ]
             }
           },
           "groups": {
@@ -68,38 +123,88 @@
             "additionalProperties": {
               "type": "object",
               "properties": {
-                "enabled": { "type": "boolean" },
-                "requireMention": { "type": "boolean" },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "requireMention": {
+                  "type": "boolean"
+                },
                 "allowFrom": {
                   "type": "array",
                   "items": {
-                    "anyOf": [{ "type": "string" }, { "type": "number" }]
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
                   }
                 },
                 "tools": {
                   "type": "object",
                   "properties": {
-                    "allow": { "type": "array", "items": { "type": "string" } },
-                    "alsoAllow": { "type": "array", "items": { "type": "string" } },
-                    "deny": { "type": "array", "items": { "type": "string" } }
+                    "allow": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "alsoAllow": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "deny": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
                   },
                   "additionalProperties": false
                 },
                 "toolsBySender": {
                   "type": "object",
-                  "propertyNames": { "type": "string" },
+                  "propertyNames": {
+                    "type": "string"
+                  },
                   "additionalProperties": {
                     "type": "object",
                     "properties": {
-                      "allow": { "type": "array", "items": { "type": "string" } },
-                      "alsoAllow": { "type": "array", "items": { "type": "string" } },
-                      "deny": { "type": "array", "items": { "type": "string" } }
+                      "allow": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "alsoAllow": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "deny": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
                     },
                     "additionalProperties": false
                   }
                 },
-                "skills": { "type": "array", "items": { "type": "string" } },
-                "systemPrompt": { "type": "string" }
+                "skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "systemPrompt": {
+                  "type": "string"
+                }
               },
               "additionalProperties": false
             }
@@ -121,9 +226,14 @@
           },
           "chunkMode": {
             "type": "string",
-            "enum": ["length", "newline"]
+            "enum": [
+              "length",
+              "newline"
+            ]
           },
-          "blockStreaming": { "type": "boolean" },
+          "blockStreaming": {
+            "type": "boolean"
+          },
           "mediaMaxMb": {
             "type": "integer",
             "exclusiveMinimum": 0,
@@ -131,27 +241,56 @@
           },
           "mediaLocalRoots": {
             "type": "array",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
-          "sendTypingIndicators": { "type": "boolean" },
+          "sendTypingIndicators": {
+            "type": "boolean"
+          },
           "threadBindings": {
             "type": "object",
             "properties": {
-              "enabled": { "type": "boolean" },
-              "spawnSubagentSessions": { "type": "boolean" },
-              "ttlHours": { "type": "number", "minimum": 0 }
+              "enabled": {
+                "type": "boolean"
+              },
+              "spawnSubagentSessions": {
+                "type": "boolean"
+              },
+              "ttlHours": {
+                "type": "number",
+                "minimum": 0
+              }
             },
             "additionalProperties": false
           },
           "actions": {
             "type": "object",
             "properties": {
-              "reactions": { "default": true, "type": "boolean" },
-              "messages": { "default": true, "type": "boolean" },
-              "groups": { "default": true, "type": "boolean" },
-              "pins": { "default": true, "type": "boolean" },
-              "memberInfo": { "default": true, "type": "boolean" },
-              "groupMembers": { "default": true, "type": "boolean" }
+              "reactions": {
+                "default": true,
+                "type": "boolean"
+              },
+              "messages": {
+                "default": true,
+                "type": "boolean"
+              },
+              "groups": {
+                "default": true,
+                "type": "boolean"
+              },
+              "pins": {
+                "default": true,
+                "type": "boolean"
+              },
+              "memberInfo": {
+                "default": true,
+                "type": "boolean"
+              },
+              "groupMembers": {
+                "default": true,
+                "type": "boolean"
+              }
             },
             "required": [
               "reactions",
@@ -169,25 +308,51 @@
             "additionalProperties": {
               "type": "object",
               "properties": {
-                "name": { "type": "string" },
-                "enabled": { "type": "boolean" },
-                "profile": { "type": "string" },
-                "zcaBinary": { "type": "string" },
+                "name": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "profile": {
+                  "type": "string"
+                },
+                "zcaBinary": {
+                  "type": "string"
+                },
                 "acpx": {
                   "type": "object",
                   "properties": {
-                    "enabled": { "type": "boolean" },
-                    "command": { "type": "string" },
-                    "agent": { "type": "string" },
-                    "cwd": { "type": "string" },
-                    "timeoutSeconds": { "type": "number", "exclusiveMinimum": 0 },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "command": {
+                      "type": "string"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "cwd": {
+                      "type": "string"
+                    },
+                    "timeoutSeconds": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
                     "permissionMode": {
                       "type": "string",
-                      "enum": ["approve-all", "approve-reads", "deny-all"]
+                      "enum": [
+                        "approve-all",
+                        "approve-reads",
+                        "deny-all"
+                      ]
                     },
                     "nonInteractivePermissions": {
                       "type": "string",
-                      "enum": ["deny", "fail"]
+                      "enum": [
+                        "deny",
+                        "fail"
+                      ]
                     }
                   },
                   "additionalProperties": false
@@ -197,29 +362,56 @@
                   "properties": {
                     "tables": {
                       "type": "string",
-                      "enum": ["off", "bullets", "code"]
+                      "enum": [
+                        "off",
+                        "bullets",
+                        "code"
+                      ]
                     }
                   },
                   "additionalProperties": false
                 },
                 "dmPolicy": {
                   "type": "string",
-                  "enum": ["pairing", "allowlist", "open", "disabled"]
+                  "enum": [
+                    "pairing",
+                    "allowlist",
+                    "open",
+                    "disabled"
+                  ]
                 },
                 "allowFrom": {
                   "type": "array",
                   "items": {
-                    "anyOf": [{ "type": "string" }, { "type": "number" }]
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
                   }
                 },
                 "groupPolicy": {
                   "type": "string",
-                  "enum": ["open", "disabled", "allowlist"]
+                  "enum": [
+                    "open",
+                    "disabled",
+                    "allowlist"
+                  ]
                 },
                 "groupAllowFrom": {
                   "type": "array",
                   "items": {
-                    "anyOf": [{ "type": "string" }, { "type": "number" }]
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
                   }
                 },
                 "groups": {
@@ -228,38 +420,88 @@
                   "additionalProperties": {
                     "type": "object",
                     "properties": {
-                      "enabled": { "type": "boolean" },
-                      "requireMention": { "type": "boolean" },
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "requireMention": {
+                        "type": "boolean"
+                      },
                       "allowFrom": {
                         "type": "array",
                         "items": {
-                          "anyOf": [{ "type": "string" }, { "type": "number" }]
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            }
+                          ]
                         }
                       },
                       "tools": {
                         "type": "object",
                         "properties": {
-                          "allow": { "type": "array", "items": { "type": "string" } },
-                          "alsoAllow": { "type": "array", "items": { "type": "string" } },
-                          "deny": { "type": "array", "items": { "type": "string" } }
+                          "allow": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "alsoAllow": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "deny": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
                         },
                         "additionalProperties": false
                       },
                       "toolsBySender": {
                         "type": "object",
-                        "propertyNames": { "type": "string" },
+                        "propertyNames": {
+                          "type": "string"
+                        },
                         "additionalProperties": {
                           "type": "object",
                           "properties": {
-                            "allow": { "type": "array", "items": { "type": "string" } },
-                            "alsoAllow": { "type": "array", "items": { "type": "string" } },
-                            "deny": { "type": "array", "items": { "type": "string" } }
+                            "allow": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "alsoAllow": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "deny": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
                           },
                           "additionalProperties": false
                         }
                       },
-                      "skills": { "type": "array", "items": { "type": "string" } },
-                      "systemPrompt": { "type": "string" }
+                      "skills": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "systemPrompt": {
+                        "type": "string"
+                      }
                     },
                     "additionalProperties": false
                   }
@@ -281,9 +523,14 @@
                 },
                 "chunkMode": {
                   "type": "string",
-                  "enum": ["length", "newline"]
+                  "enum": [
+                    "length",
+                    "newline"
+                  ]
                 },
-                "blockStreaming": { "type": "boolean" },
+                "blockStreaming": {
+                  "type": "boolean"
+                },
                 "mediaMaxMb": {
                   "type": "integer",
                   "exclusiveMinimum": 0,
@@ -291,27 +538,56 @@
                 },
                 "mediaLocalRoots": {
                   "type": "array",
-                  "items": { "type": "string" }
+                  "items": {
+                    "type": "string"
+                  }
                 },
-                "sendTypingIndicators": { "type": "boolean" },
+                "sendTypingIndicators": {
+                  "type": "boolean"
+                },
                 "threadBindings": {
                   "type": "object",
                   "properties": {
-                    "enabled": { "type": "boolean" },
-                    "spawnSubagentSessions": { "type": "boolean" },
-                    "ttlHours": { "type": "number", "minimum": 0 }
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "spawnSubagentSessions": {
+                      "type": "boolean"
+                    },
+                    "ttlHours": {
+                      "type": "number",
+                      "minimum": 0
+                    }
                   },
                   "additionalProperties": false
                 },
                 "actions": {
                   "type": "object",
                   "properties": {
-                    "reactions": { "default": true, "type": "boolean" },
-                    "messages": { "default": true, "type": "boolean" },
-                    "groups": { "default": true, "type": "boolean" },
-                    "pins": { "default": true, "type": "boolean" },
-                    "memberInfo": { "default": true, "type": "boolean" },
-                    "groupMembers": { "default": true, "type": "boolean" }
+                    "reactions": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "messages": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "groups": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "pins": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "memberInfo": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "groupMembers": {
+                      "default": true,
+                      "type": "boolean"
+                    }
                   },
                   "required": [
                     "reactions",
@@ -327,13 +603,17 @@
               "additionalProperties": false
             }
           },
-          "defaultAccount": { "type": "string" }
+          "defaultAccount": {
+            "type": "string"
+          }
         },
         "additionalProperties": false
       }
     }
   },
-  "skills": ["./skills"],
+  "skills": [
+    "./skills"
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
