@@ -35,7 +35,7 @@ import { probeOpenzaloAuth } from "./probe.js";
 import { getOpenzaloRuntime } from "./runtime.js";
 import { getOpenzaloRuntimeHealthState } from "./runtime-health.js";
 import { sendMediaOpenzalo, sendTextOpenzalo } from "./send.js";
-import { OpenzaloConfigSchema } from "./config-schema.js";
+import { OpenzaloChannelConfigSchema } from "./config-schema.js";
 import { collectOpenzaloStatusIssues, resolveOpenzaloAccountState } from "./status.js";
 import { runOpenzcaCommand, runOpenzcaInteractive } from "./openzca.js";
 import { normalizeResolvedGroupTarget, normalizeResolvedUserTarget } from "./resolver-target.js";
@@ -140,7 +140,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
     },
   },
   reload: { configPrefixes: ["channels.openzalo"] },
-  configSchema: buildChannelConfigSchema(OpenzaloConfigSchema),
+  configSchema: OpenzaloChannelConfigSchema,
   config: {
     listAccountIds: (cfg) => listOpenzaloAccountIds(cfg as CoreConfig),
     resolveAccount: (cfg, accountId) => resolveAccount(cfg, accountId),

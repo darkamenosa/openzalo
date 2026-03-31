@@ -1,3 +1,4 @@
+import { buildChannelConfigSchema } from "openclaw/plugin-sdk/channel-config-schema";
 import { z } from "zod";
 
 const allowFromEntry = z.union([z.string(), z.number()]);
@@ -95,3 +96,5 @@ export const OpenzaloConfigSchema = openzaloAccountSchema.extend({
   accounts: z.object({}).catchall(openzaloAccountSchema).optional(),
   defaultAccount: z.string().optional(),
 });
+
+export const OpenzaloChannelConfigSchema = buildChannelConfigSchema(OpenzaloConfigSchema);
