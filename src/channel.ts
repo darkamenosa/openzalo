@@ -1,6 +1,5 @@
 import {
   applyAccountNameToChannelSection,
-  buildChannelConfigSchema,
   DEFAULT_ACCOUNT_ID,
   deleteAccountFromConfigSection,
   formatPairingApproveHint,
@@ -10,6 +9,7 @@ import {
   setAccountEnabledInConfigSection,
   type ChannelPlugin,
 } from "../api.js";
+import { buildChannelConfigSchema } from "openclaw/plugin-sdk/channel-config-schema";
 import { listOpenzaloDirectoryGroups, listOpenzaloDirectoryPeers, listOpenzaloDirectorySelf } from "./directory.js";
 import { handleOpenzaloInbound } from "./inbound.js";
 import { monitorOpenzaloProvider } from "./monitor.js";

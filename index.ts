@@ -1,4 +1,4 @@
-import { defineChannelPluginEntry } from "./api.js";
+import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 import { openzaloPlugin } from "./src/channel.js";
 import { setOpenzaloRuntime } from "./src/runtime.js";
 import { registerOpenzaloSubagentHooks } from "./src/subagent-hooks.js";
