@@ -4,7 +4,9 @@
   "description": "OpenClaw OpenZalo channel plugin (personal account via openzca CLI)",
   "type": "module",
   "scripts": {
-    "test": "node --import tsx --test src/*.test.ts src/**/*.test.ts"
+    "manifest:channel-schema:sync": "node --import tsx ./scripts/sync-manifest-channel-config.ts",
+    "manifest:channel-schema:check": "node --import tsx ./scripts/sync-manifest-channel-config.ts --check",
+    "test": "npm run manifest:channel-schema:check && node --import tsx --test src/*.test.ts src/**/*.test.ts"
   },
   "dependencies": {
     "zod": "^4.3.6"
