@@ -415,8 +415,8 @@ export async function sendMediaOpenzalo(
   });
   const source = resolvedSource.source;
   const resolvedMediaCommand = resolveMediaCommand(source, resolvedSource.mediaKind);
-  let mediaCommand = resolvedMediaCommand;
-  let args = buildOpenzcaMediaArgs({
+  const mediaCommand = resolvedMediaCommand;
+  const args = buildOpenzcaMediaArgs({
     target,
     source,
     mediaCommand,
@@ -439,45 +439,16 @@ export async function sendMediaOpenzalo(
   });
 
   try {
-    let result: Awaited<ReturnType<typeof runOpenzcaAccountCommand>>;
-    try {
-      result = await runOpenzcaAccountCommand({
-        account,
-        binary: account.zcaBinary,
-        profile: account.profile,
-        args,
-        timeoutMs: 60_000,
-      });
-    } catch (error) {
-      if (mediaCommand !== "upload") {
-        logOutbound("warn", "sendMedia primary command failed; retrying with upload", {
-          accountId: account.accountId,
-          threadId: target.threadId,
-          isGroup: target.isGroup,
-          sourceType,
-          rawSourceType,
-          mediaCommand,
-          source,
-          error: String(error),
-        });
-        mediaCommand = "upload";
-        args = buildOpenzcaMediaArgs({
-          target,
-          source,
-          mediaCommand,
-          message: text,
-        });
-        result = await runOpenzcaAccountCommand({
-          account,
-          binary: account.zcaBinary,
-          profile: account.profile,
-          args,
-          timeoutMs: 60_000,
-        });
-      } else {
-        throw error;
-      }
-    }
+    // Match the Telegram channel's delivery policy: do not mutate a failed media
+    // send into a different command unless we add a narrow, documented
+    // Zalo-specific exception later.
+    const result = await runOpenzcaAccountCommand({
+      account,
+      binary: account.zcaBinary,
+      profile: account.profile,
+      args,
+      timeoutMs: 60_000,
+    });
     const refs = parseOpenzcaMessageRefs(result.stdout);
     const mediaReceipt: OpenzaloSendReceipt = {
       messageId: refs.msgId || "ok",
@@ -488,7 +459,8 @@ export async function sendMediaOpenzalo(
 
     const receipts: OpenzaloSendReceipt[] = [mediaReceipt];
     const captionSentInline = mediaCommand === "video" && Boolean(text?.trim());
-    if (text?.trim() && !captionSentInline) {
+    const shouldSendCaptionAsText = text?.trim() && mediaCommand !== "voice" && !captionSentInline;
+    if (shouldSendCaptionAsText) {
       const captionReceipt = await sendTextOpenzalo({
         cfg: options.cfg,
         account,
