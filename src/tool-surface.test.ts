@@ -65,7 +65,10 @@ test("OpenZalo skill docs describe DB-backed reads and media CLI behavior", asyn
   assert.match(skillDoc, /\.mp4/i);
   assert.match(skillDoc, /db/i);
   assert.match(skillDoc, /msg video/i);
+  assert.match(skillDoc, /msg voice/i);
   assert.match(skillDoc, /--message/i);
+  assert.match(skillDoc, /OPENZCA_VOICE_PUBLISH_CMD/i);
+  assert.match(skillDoc, /mediaLocalRoots/i);
 });
 
 test("OpenZalo no longer ships a separate openzalo skill doc", async () => {

@@ -191,6 +191,8 @@ openzca --profile <profile> msg sticker <threadId> <stickerId>
 openzca --profile <profile> msg send <threadId> "<reply text>" --reply-id <msgIdOrCliMsgIdOrMessageUid>
 openzca --profile <profile> msg send <threadId> "<reply text>" --reply-message '<listenRawPayloadJson>'
 openzca --profile <profile> msg video <threadId> <file> --message "<caption>"
+openzca --profile <profile> msg voice <threadId> <file>
+openzca --profile <profile> msg voice <threadId> --url <publicAudioUrl>
 openzca --profile <profile> msg link <threadId> <url>
 openzca --profile <profile> msg card <threadId> <contactId>
 openzca --profile <profile> msg forward "<message>" <target1> <target2>
@@ -245,6 +247,11 @@ openzca account switch <name>
 - Prefer `--limit` over `--all` unless the user explicitly asks for full history.
 - Prefer `--oldest-first` when the output will be turned into a timeline or chronological summary.
 - `msg video` accepts local files or `--url`; for a single `.mp4`, `openzca` attempts native video delivery and keeps `--message` as the inline video caption.
+- `msg voice` accepts local files or `--url`.
+- `msg voice --url <publicAudioUrl>` sends the URL directly.
+- For local voice files, `openzca` can normalize the audio and publish it first when both `ffmpeg` and `OPENZCA_VOICE_PUBLISH_CMD` are configured on the gateway host.
+- If that publish hook is not configured, `msg voice <file>` falls back to the older upload flow.
+- In OpenZalo plugin flows, local media is still gated by `channels.openzalo.mediaLocalRoots` before `openzca` is invoked. If a local voice file under `/tmp` or another temp directory is blocked, either add that absolute parent path to `mediaLocalRoots` or use a public `--url`.
 - For native mention prep, use `group members <groupId> --json` to resolve exact member ids/display names before sending `@Name`/`@userId`.
 - For formatted replies, use `msg analyze-text ... --json` before `msg send` when payload expansion might matter. This is more reliable than raw-length chunking because markdown lists and styles can expand into large `textProperties`.
 - If `msg send` fails with a generic transport error, re-run `msg analyze-text` on the exact text that failed and split on logical boundaries before retrying.
