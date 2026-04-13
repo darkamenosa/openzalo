@@ -327,6 +327,7 @@ Default safe media roots (under `OPENCLAW_STATE_DIR` or `CLAWDBOT_STATE_DIR`, fa
 - `media`
 - `agents`
 - `sandboxes`
+- OpenClaw temp media under the preferred OpenClaw tmp root (typically `/tmp/openclaw`, with a secure host-specific fallback when needed)
 
 ## Troubleshooting
 

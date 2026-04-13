@@ -2,8 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadOutboundMediaFromUrlCompat, type LoadedOutboundMediaKind } from "./outbound-media-compat.js";
 import { parseOpenzaloTarget } from "./normalize.js";
 import { runOpenzcaAccountCommand } from "./openzca-account.js";
+import { resolvePreferredOpenClawTmpDirCompat } from "./preferred-tmp-dir.js";
 import { getOpenzaloRuntime } from "./runtime.js";
 import type { CoreConfig, ResolvedOpenzaloAccount } from "./types.js";
 import { parseOpenzcaMessageRefs } from "./message-refs.js";
@@ -23,6 +25,7 @@ type SendMediaOptions = {
   mediaUrl?: string;
   mediaPath?: string;
   mediaLocalRoots?: readonly string[];
+  mediaReadFile?: (filePath: string) => Promise<Buffer>;
 };
 
 type SendTypingOptions = {
@@ -68,10 +71,16 @@ function resolveStateDir(): string {
   return path.join(os.homedir(), ".openclaw");
 }
 
-type ResolvedMediaRoot = {
-  resolvedPath: string;
-  realPath: string;
-};
+async function defaultMediaRoots(): Promise<string[]> {
+  const stateDir = resolveStateDir();
+  return [
+    await resolvePreferredOpenClawTmpDirCompat(),
+    path.join(stateDir, "workspace"),
+    path.join(stateDir, "media"),
+    path.join(stateDir, "agents"),
+    path.join(stateDir, "sandboxes"),
+  ];
+}
 
 function resolveConfiguredRootPath(input: string): string {
   const trimmed = input.trim();
@@ -99,33 +108,11 @@ function resolveConfiguredRootPath(input: string): string {
   return path.resolve(expanded);
 }
 
-function isPathInsideRoot(candidate: string, root: string): boolean {
-  const normalizedCandidate = path.normalize(candidate);
-  const normalizedRoot = path.normalize(root);
-  const rootWithSep = normalizedRoot.endsWith(path.sep)
-    ? normalizedRoot
-    : normalizedRoot + path.sep;
-  if (process.platform === "win32") {
-    const candidateLower = normalizedCandidate.toLowerCase();
-    const rootLower = normalizedRoot.toLowerCase();
-    const rootWithSepLower = rootWithSep.toLowerCase();
-    return candidateLower === rootLower || candidateLower.startsWith(rootWithSepLower);
-  }
-  return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(rootWithSep);
-}
-
-async function resolveMediaRoots(localRoots?: readonly string[]): Promise<ResolvedMediaRoot[]> {
-  const stateDir = resolveStateDir();
-  const roots = [
-    ...(localRoots ?? []),
-    path.join(stateDir, "workspace"),
-    path.join(stateDir, "media"),
-    path.join(stateDir, "agents"),
-    path.join(stateDir, "sandboxes"),
-  ];
+async function resolveMediaRoots(localRoots?: readonly string[]): Promise<string[]> {
+  const roots = [...(localRoots ?? []), ...(await defaultMediaRoots())];
 
   const deduped = new Set<string>();
-  const resolved: ResolvedMediaRoot[] = [];
+  const resolved: string[] = [];
   for (const root of roots) {
     const trimmed = root.trim();
     if (!trimmed) {
@@ -136,30 +123,28 @@ async function resolveMediaRoots(localRoots?: readonly string[]): Promise<Resolv
       continue;
     }
     deduped.add(resolvedPath);
-    let realPath = resolvedPath;
-    try {
-      realPath = await fs.realpath(resolvedPath);
-    } catch {
-      // Keep unresolved root for future directories that may not exist yet.
-    }
-    resolved.push({
-      resolvedPath,
-      realPath: path.resolve(realPath),
-    });
+    resolved.push(resolvedPath);
   }
   return resolved;
 }
 
-function normalizeLocalSourcePath(source: string): string {
-  const stripped = stripMediaPrefix(source);
-  if (/^file:\/\//i.test(stripped)) {
+function resolveOpenzaloMediaMaxBytes(account: ResolvedOpenzaloAccount): number | undefined {
+  const configuredMb = account.config.mediaMaxMb;
+  if (typeof configuredMb !== "number" || !Number.isFinite(configuredMb) || configuredMb <= 0) {
+    return undefined;
+  }
+  return Math.round(configuredMb * 1024 * 1024);
+}
+
+function normalizeLocalMediaSource(source: string): string {
+  if (/^file:\/\//i.test(source)) {
     try {
-      return fileURLToPath(stripped);
+      return fileURLToPath(source);
     } catch {
-      return stripped;
+      return source;
     }
   }
-  return expandHomePath(stripped);
+  return expandHomePath(source);
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -171,108 +156,76 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-async function resolveAllowedLocalFile(params: {
-  candidate: string;
-  roots: ResolvedMediaRoot[];
-}): Promise<string | null> {
-  const resolvedCandidate = path.resolve(params.candidate);
-
-  for (const root of params.roots) {
-    const relativeToRoot = path.relative(root.resolvedPath, resolvedCandidate);
-    if (
-      !relativeToRoot ||
-      relativeToRoot.startsWith("..") ||
-      path.isAbsolute(relativeToRoot)
-    ) {
-      continue;
-    }
-
-    const candidateFromRealRoot = path.resolve(root.realPath, relativeToRoot);
-    if (!isPathInsideRoot(candidateFromRealRoot, root.realPath)) {
-      continue;
-    }
-
-    try {
-      const realPath = await fs.realpath(candidateFromRealRoot);
-      if (!isPathInsideRoot(realPath, root.realPath)) {
-        continue;
-      }
-      const stat = await fs.stat(realPath);
-      if (!stat.isFile()) {
-        continue;
-      }
-      return realPath;
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
-}
-
-async function resolveMediaSource(params: {
+async function resolveMediaLoadSource(params: {
   source: string;
-  mediaLocalRoots?: readonly string[];
-}): Promise<{ source: string; sourceType: "url" | "path" }> {
-  const normalized = stripMediaPrefix(params.source);
-  if (!normalized) {
-    return { source: "", sourceType: "path" };
+  mediaLocalRoots: readonly string[];
+}): Promise<string> {
+  if (!params.source || isHttpUrl(params.source)) {
+    return params.source;
   }
-  if (isHttpUrl(normalized)) {
-    return { source: normalized, sourceType: "url" };
+  const normalized = normalizeLocalMediaSource(params.source);
+  if (path.isAbsolute(normalized)) {
+    return normalized;
   }
 
-  const local = normalizeLocalSourcePath(normalized);
-  const roots = await resolveMediaRoots(params.mediaLocalRoots);
-  const candidates: string[] = [];
-  if (path.isAbsolute(local)) {
-    candidates.push(path.resolve(local));
-  } else {
-    const relative = local.replace(/^\.[/\\]+/, "");
-    candidates.push(path.resolve(local));
-    for (const root of roots) {
-      candidates.push(path.resolve(root.resolvedPath, local));
-      if (relative && relative !== local) {
-        candidates.push(path.resolve(root.resolvedPath, relative));
-      }
-    }
+  const candidates = [path.resolve(normalized)];
+  for (const root of params.mediaLocalRoots) {
+    candidates.push(path.resolve(root, normalized));
   }
 
   const seen = new Set<string>();
-  const attempted: string[] = [];
-  const blocked: string[] = [];
   for (const candidate of candidates) {
-    const normalizedCandidate = path.resolve(candidate);
-    if (seen.has(normalizedCandidate)) {
+    const resolvedCandidate = path.resolve(candidate);
+    if (seen.has(resolvedCandidate)) {
       continue;
     }
-    seen.add(normalizedCandidate);
-    attempted.push(normalizedCandidate);
-    if (!(await fileExists(normalizedCandidate))) {
-      continue;
+    seen.add(resolvedCandidate);
+    if (await fileExists(resolvedCandidate)) {
+      return resolvedCandidate;
     }
-
-    const allowedPath = await resolveAllowedLocalFile({
-      candidate: normalizedCandidate,
-      roots,
-    });
-    if (allowedPath) {
-      return { source: allowedPath, sourceType: "path" };
-    }
-    blocked.push(normalizedCandidate);
   }
+  return normalized;
+}
 
-  if (blocked.length > 0) {
-    throw new Error(
-      "OpenZalo local media path is outside allowed roots. " +
-        `Source="${params.source}" Existing candidates: ${blocked.slice(0, 4).join(" | ")}. ` +
-        'Set "channels.openzalo.mediaLocalRoots" (or per-account mediaLocalRoots) to allow more paths.',
-    );
+async function stageMediaSource(params: {
+  account: ResolvedOpenzaloAccount;
+  source: string;
+  mediaLocalRoots?: readonly string[];
+  mediaReadFile?: (filePath: string) => Promise<Buffer>;
+}): Promise<{
+  source: string;
+  sourceType: "path";
+  rawSourceType: "url" | "path";
+  mediaKind?: LoadedOutboundMediaKind;
+}> {
+  const normalized = stripMediaPrefix(params.source);
+  if (!normalized) {
+    return { source: "", sourceType: "path", rawSourceType: "path" };
   }
-
-  throw new Error(
-    `OpenZalo media file not found for source "${params.source}". Tried: ${attempted.slice(0, 8).join(" | ")}`,
+  const mediaLocalRoots = await resolveMediaRoots(params.mediaLocalRoots);
+  const maxBytes = resolveOpenzaloMediaMaxBytes(params.account);
+  const loadSource = await resolveMediaLoadSource({
+    source: normalized,
+    mediaLocalRoots,
+  });
+  const loaded = await loadOutboundMediaFromUrlCompat(loadSource, {
+    maxBytes,
+    mediaLocalRoots,
+    mediaReadFile: params.mediaReadFile,
+  });
+  const saved = await getOpenzaloRuntime().channel.media.saveMediaBuffer(
+    loaded.buffer,
+    loaded.contentType,
+    "outbound",
+    Math.max(maxBytes ?? 0, loaded.buffer.byteLength, 1),
+    loaded.fileName,
   );
+  return {
+    source: saved.path,
+    sourceType: "path",
+    rawSourceType: isHttpUrl(normalized) ? "url" : "path",
+    mediaKind: loaded.kind,
+  };
 }
 
 type MediaCommand = "upload" | "image" | "video" | "voice";
@@ -305,7 +258,16 @@ function extractFileExtension(value: string): string {
   return fileName.slice(dot + 1).toLowerCase();
 }
 
-function resolveMediaCommand(source: string): MediaCommand {
+function resolveMediaCommand(source: string, mediaKind?: LoadedOutboundMediaKind): MediaCommand {
+  if (mediaKind === "audio") {
+    return "voice";
+  }
+  if (mediaKind === "video") {
+    return "video";
+  }
+  if (mediaKind === "image") {
+    return "image";
+  }
   const ext = extractFileExtension(source);
   if (AUDIO_EXTENSIONS.has(ext)) {
     return "voice";
@@ -422,7 +384,7 @@ export async function sendTextOpenzalo(options: SendTextOptions): Promise<Openza
 export async function sendMediaOpenzalo(
   options: SendMediaOptions,
 ): Promise<OpenzaloSendReceipt & { receipts: OpenzaloSendReceipt[] }> {
-  const { account, to, text, mediaUrl, mediaPath, mediaLocalRoots } = options;
+  const { account, to, text, mediaUrl, mediaPath, mediaLocalRoots, mediaReadFile } = options;
   const target = parseOpenzaloTarget(to);
   const rawSource = (mediaPath ?? mediaUrl ?? "").trim();
   if (!rawSource) {
@@ -445,12 +407,14 @@ export async function sendMediaOpenzalo(
     };
   }
 
-  const resolvedSource = await resolveMediaSource({
+  const resolvedSource = await stageMediaSource({
+    account,
     source: rawSource,
     mediaLocalRoots,
+    mediaReadFile,
   });
   const source = resolvedSource.source;
-  const resolvedMediaCommand = resolveMediaCommand(source);
+  const resolvedMediaCommand = resolveMediaCommand(source, resolvedSource.mediaKind);
   let mediaCommand = resolvedMediaCommand;
   let args = buildOpenzcaMediaArgs({
     target,
@@ -459,6 +423,7 @@ export async function sendMediaOpenzalo(
     message: text,
   });
   const sourceType = resolvedSource.sourceType;
+  const rawSourceType = resolvedSource.rawSourceType;
 
   logOutbound("info", "sendMedia request", {
     accountId: account.accountId,
@@ -466,6 +431,7 @@ export async function sendMediaOpenzalo(
     threadId: target.threadId,
     isGroup: target.isGroup,
     sourceType,
+    rawSourceType,
     rawSource,
     source,
     mediaCommand: resolvedMediaCommand,
@@ -489,6 +455,7 @@ export async function sendMediaOpenzalo(
           threadId: target.threadId,
           isGroup: target.isGroup,
           sourceType,
+          rawSourceType,
           mediaCommand,
           source,
           error: String(error),
@@ -541,6 +508,7 @@ export async function sendMediaOpenzalo(
       threadId: target.threadId,
       isGroup: target.isGroup,
       sourceType,
+      rawSourceType,
       mediaCommand,
       msgId: primary.msgId,
       cliMsgId: primary.cliMsgId,
@@ -557,6 +525,7 @@ export async function sendMediaOpenzalo(
       threadId: target.threadId,
       isGroup: target.isGroup,
       sourceType,
+      rawSourceType,
       mediaCommand,
       source,
       error: String(error),
