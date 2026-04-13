@@ -34,6 +34,7 @@ Recommended setup:
 
 - OpenClaw Gateway is installed and running.
 - `openzca` is installed and available in `PATH` (or configure `channels.openzalo.zcaBinary`).
+- For local voice files that must play reliably on mobile clients, configure `OPENZCA_VOICE_PUBLISH_CMD` on the gateway host and make sure `ffmpeg` is installed there too.
 - If you want OpenZalo ACP-local sessions via `/acp`, install `acpx` too.
 - You can authenticate with your Zalo account on the gateway machine.
 
@@ -301,6 +302,13 @@ If `acpx` is not set, OpenZalo ACP-local uses:
 2. `OPENZALO_ACPX_COMMAND` env var
 3. `acpx`
 
+Voice publishing is handled by `openzca`, not by OpenZalo directly. For local `msg voice` sends, `openzca` uses:
+
+1. `OPENZCA_VOICE_PUBLISH_CMD` env var
+2. legacy direct upload flow when that env var is unset or `ffmpeg` is unavailable
+
+`OPENZCA_VOICE_PUBLISH_CMD` should point to a command available on the gateway host that accepts one local normalized audio file path and prints one final public `http(s)` URL to stdout.
+
 ## Target Format
 
 - DM target: `<userId>`
@@ -320,6 +328,8 @@ Use `group:` for explicit group sends.
 - Pairing mode sends approval code for unknown DM senders.
 - Subagent session binding controls use `channels.openzalo.threadBindings.*` (or per-account overrides).
 - Local media is restricted to allowed roots for safety.
+- OpenZalo checks `mediaLocalRoots` before calling `openzca` for local media. That still applies even when `openzca` later publishes local voice files through `OPENZCA_VOICE_PUBLISH_CMD`.
+- Public voice URLs are fine: if the upstream caller already provides a public audio URL, OpenZalo can pass it through to `openzca msg voice --url ...` without needing local media roots.
 
 Default safe media roots (under `OPENCLAW_STATE_DIR` or `CLAWDBOT_STATE_DIR`, fallback `~/.openclaw`):
 
@@ -337,3 +347,4 @@ Default safe media roots (under `OPENCLAW_STATE_DIR` or `CLAWDBOT_STATE_DIR`, fa
 - Group message dropped: verify `groupPolicy`, `groupAllowFrom`, and `groups.<groupId>` allowlist.
 - Group message dropped with allowlist configured: check `requireMention` and mention detection.
 - Local media blocked: add absolute paths to `channels.openzalo.mediaLocalRoots`.
+- Local voice sends work on web but fail on mobile: configure `OPENZCA_VOICE_PUBLISH_CMD` on the gateway host and ensure `ffmpeg` is installed for `openzca`.
