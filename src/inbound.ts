@@ -54,6 +54,7 @@ import {
   acquireOpenzaloOutboundDedupeSlot,
   releaseOpenzaloOutboundDedupeSlot,
 } from "./outbound-dedupe.js";
+import { parseOpenzaloMediaDirectives } from "./reply-payload-transform.js";
 import type { CoreConfig, OpenzaloInboundMessage, ResolvedOpenzaloAccount } from "./types.js";
 import { dedupeStrings } from "./utils/dedupe-strings.js";
 
@@ -62,6 +63,71 @@ const DEFAULT_GROUP_SYSTEM_PROMPT =
   "When sending media/files in this same group, never claim success unless media is actually attached. " +
   "Prefer MEDIA:./relative-path or MEDIA:https://... in your reply text. " +
   "If the source file is outside workspace, copy it into workspace first and then use a relative MEDIA path.";
+
+type OpenClawOutboundRuntime = {
+  createOutboundPayloadPlan: (
+    payloads: ReplyPayload[],
+    ctx?: {
+      cfg?: unknown;
+      sessionKey?: string;
+      surface?: string;
+    },
+  ) => unknown;
+  projectOutboundPayloadPlanForDelivery: (plan: unknown) => ReplyPayload[];
+};
+
+let outboundRuntimePromise: Promise<OpenClawOutboundRuntime | null> | undefined;
+
+function isMissingOpenClawOutboundRuntime(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "ERR_MODULE_NOT_FOUND" &&
+    error instanceof Error &&
+    /openclaw(?:\/plugin-sdk\/outbound-runtime)?/i.test(error.message)
+  );
+}
+
+function isOpenClawOutboundRuntime(value: unknown): value is OpenClawOutboundRuntime {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as OpenClawOutboundRuntime).createOutboundPayloadPlan === "function" &&
+    typeof (value as OpenClawOutboundRuntime).projectOutboundPayloadPlanForDelivery === "function"
+  );
+}
+
+async function loadOpenClawOutboundRuntime(): Promise<OpenClawOutboundRuntime | null> {
+  outboundRuntimePromise ??= import("openclaw/plugin-sdk/outbound-runtime")
+    .then((mod) => (isOpenClawOutboundRuntime(mod) ? mod : null))
+    .catch((error) => {
+      if (isMissingOpenClawOutboundRuntime(error)) {
+        return null;
+      }
+      throw error;
+    });
+  return outboundRuntimePromise;
+}
+
+async function normalizeOpenzaloReplyPayloadsForDelivery(params: {
+  payload: ReplyPayload;
+  cfg: CoreConfig;
+  sessionKey: string;
+}): Promise<ReplyPayload[]> {
+  const outboundRuntime = await loadOpenClawOutboundRuntime();
+  if (outboundRuntime) {
+    return outboundRuntime.projectOutboundPayloadPlanForDelivery(
+      outboundRuntime.createOutboundPayloadPlan([params.payload], {
+        cfg: params.cfg,
+        sessionKey: params.sessionKey,
+        surface: CHANNEL_ID,
+      }),
+    );
+  }
+
+  return [parseOpenzaloMediaDirectives(params.payload)];
+}
 
 function nextOpenzaloOutboundSequence(map: Map<string, number>, key: string): number {
   const next = (map.get(key) ?? 0) + 1;
@@ -212,108 +278,116 @@ async function deliverOpenzaloReply(params: {
   runtime: RuntimeEnv;
   statusSink?: (patch: { lastOutboundAt?: number }) => void;
 }): Promise<OpenzaloSendReceipt[]> {
-  const { payload, target, sessionKey, account, cfg, runtime, statusSink } = params;
+  const { target, sessionKey, account, cfg, runtime, statusSink } = params;
   const receipts: OpenzaloSendReceipt[] = [];
-  const mediaList = payload.mediaUrls?.length
-    ? payload.mediaUrls
-    : payload.mediaUrl
-      ? [payload.mediaUrl]
-      : [];
-  const text = payload.text?.trim() ?? "";
+  const payloads = await normalizeOpenzaloReplyPayloadsForDelivery({
+    payload: params.payload,
+    cfg,
+    sessionKey,
+  });
 
-  if (!text && mediaList.length === 0) {
-    return receipts;
-  }
+  for (const payload of payloads) {
+    const mediaList = payload.mediaUrls?.length
+      ? payload.mediaUrls
+      : payload.mediaUrl
+        ? [payload.mediaUrl]
+        : [];
+    const text = payload.text?.trim() ?? "";
 
-  if (mediaList.length > 0) {
-    let first = true;
-    for (const mediaUrl of mediaList) {
-      const caption = first ? text : undefined;
-      const dedupe = acquireOpenzaloOutboundDedupeSlot({
-        accountId: account.accountId,
-        sessionKey,
-        target,
-        kind: "media",
-        text: caption,
-        mediaRef: mediaUrl,
-      });
-      if (!dedupe.acquired) {
-        runtime.log?.(
-          `[${account.accountId}] openzalo skip duplicate media send (${dedupe.reason}) target=${target}`,
-        );
-        continue;
-      }
-
-      let sent = false;
-      try {
-        const result = await sendMediaOpenzalo({
-          cfg,
-          account,
-          to: target,
-          mediaUrl,
-          text: caption,
-          mediaLocalRoots: account.config.mediaLocalRoots,
-        });
-        receipts.push(...(result.receipts.length > 0 ? result.receipts : [result]));
-        sent = true;
-        first = false;
-        statusSink?.({ lastOutboundAt: Date.now() });
-      } finally {
-        releaseOpenzaloOutboundDedupeSlot({
-          ticket: dedupe.ticket,
-          sent,
-        });
-      }
+    if (!text && mediaList.length === 0) {
+      continue;
     }
-    return receipts;
-  }
 
-  if (text) {
-    const limit = account.config.textChunkLimit && account.config.textChunkLimit > 0
-      ? account.config.textChunkLimit
-      : 1800;
-    const chunkMode = account.config.chunkMode ?? "length";
-    const core = getOpenzaloRuntime();
-    const chunks =
-      chunkMode === "newline"
-        ? core.channel.text.chunkTextWithMode(text, limit, chunkMode)
-        : core.channel.text.chunkMarkdownText(text, limit);
-    const finalChunks = chunks.length > 0 ? chunks : [text];
-    const textSequenceByChunk = new Map<string, number>();
+    if (mediaList.length > 0) {
+      let first = true;
+      for (const mediaUrl of mediaList) {
+        const caption = first ? text : undefined;
+        const dedupe = acquireOpenzaloOutboundDedupeSlot({
+          accountId: account.accountId,
+          sessionKey,
+          target,
+          kind: "media",
+          text: caption,
+          mediaRef: mediaUrl,
+        });
+        if (!dedupe.acquired) {
+          runtime.log?.(
+            `[${account.accountId}] openzalo skip duplicate media send (${dedupe.reason}) target=${target}`,
+          );
+          continue;
+        }
 
-    for (const chunk of finalChunks) {
-      const sequence = nextOpenzaloOutboundSequence(textSequenceByChunk, chunk);
-      const dedupe = acquireOpenzaloOutboundDedupeSlot({
-        accountId: account.accountId,
-        sessionKey,
-        target,
-        kind: "text",
-        text: chunk,
-        sequence,
-      });
-      if (!dedupe.acquired) {
-        runtime.log?.(
-          `[${account.accountId}] openzalo skip duplicate text send (${dedupe.reason}) target=${target}`,
-        );
-        continue;
+        let sent = false;
+        try {
+          const result = await sendMediaOpenzalo({
+            cfg,
+            account,
+            to: target,
+            mediaUrl,
+            text: caption,
+            mediaLocalRoots: account.config.mediaLocalRoots,
+          });
+          receipts.push(...(result.receipts.length > 0 ? result.receipts : [result]));
+          sent = true;
+          first = false;
+          statusSink?.({ lastOutboundAt: Date.now() });
+        } finally {
+          releaseOpenzaloOutboundDedupeSlot({
+            ticket: dedupe.ticket,
+            sent,
+          });
+        }
       }
+      continue;
+    }
 
-      let sent = false;
-      try {
-        const receipt = await sendTextOpenzalo({
-          cfg,
-          account,
-          to: target,
+    if (text) {
+      const limit = account.config.textChunkLimit && account.config.textChunkLimit > 0
+        ? account.config.textChunkLimit
+        : 1800;
+      const chunkMode = account.config.chunkMode ?? "length";
+      const core = getOpenzaloRuntime();
+      const chunks =
+        chunkMode === "newline"
+          ? core.channel.text.chunkTextWithMode(text, limit, chunkMode)
+          : core.channel.text.chunkMarkdownText(text, limit);
+      const finalChunks = chunks.length > 0 ? chunks : [text];
+      const textSequenceByChunk = new Map<string, number>();
+
+      for (const chunk of finalChunks) {
+        const sequence = nextOpenzaloOutboundSequence(textSequenceByChunk, chunk);
+        const dedupe = acquireOpenzaloOutboundDedupeSlot({
+          accountId: account.accountId,
+          sessionKey,
+          target,
+          kind: "text",
           text: chunk,
+          sequence,
         });
-        receipts.push(receipt);
-        sent = true;
-        statusSink?.({ lastOutboundAt: Date.now() });
-      } finally {
-        releaseOpenzaloOutboundDedupeSlot({
-          ticket: dedupe.ticket,
-          sent,
-        });
+        if (!dedupe.acquired) {
+          runtime.log?.(
+            `[${account.accountId}] openzalo skip duplicate text send (${dedupe.reason}) target=${target}`,
+          );
+          continue;
+        }
+
+        let sent = false;
+        try {
+          const receipt = await sendTextOpenzalo({
+            cfg,
+            account,
+            to: target,
+            text: chunk,
+          });
+          receipts.push(receipt);
+          sent = true;
+          statusSink?.({ lastOutboundAt: Date.now() });
+        } finally {
+          releaseOpenzaloOutboundDedupeSlot({
+            ticket: dedupe.ticket,
+            sent,
+          });
+        }
       }
     }
   }
