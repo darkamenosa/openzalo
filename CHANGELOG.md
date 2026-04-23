@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026.4.23
+
+### Changed
+
+- Aligned OpenZalo reply media delivery with OpenClaw's shared payload media sequencing helper while preserving OpenZalo-specific dedupe, receipt tracking, and caption handling.
+- Added opt-in reply media trace logging for diagnosing payload normalization and delivery paths.
+
+### Fixed
+
+- Recovered stripped `MEDIA:` directives from the active OpenClaw session when the channel receives a text-only reply payload, allowing generated images to be delivered to Zalo instead of only sending the caption text.
+
 ## 2026.4.14
 
 ### Changed

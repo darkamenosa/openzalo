@@ -54,11 +54,20 @@ import {
   acquireOpenzaloOutboundDedupeSlot,
   releaseOpenzaloOutboundDedupeSlot,
 } from "./outbound-dedupe.js";
-import { parseOpenzaloMediaDirectives } from "./reply-payload-transform.js";
+import {
+  hasOpenzaloMediaDirectives,
+  parseOpenzaloMediaDirectives,
+} from "./reply-payload-transform.js";
+import { recoverOpenzaloMediaPayloadFromSession } from "./reply-session-recovery.js";
 import type { CoreConfig, OpenzaloInboundMessage, ResolvedOpenzaloAccount } from "./types.js";
 import { dedupeStrings } from "./utils/dedupe-strings.js";
 
 const CHANNEL_ID = "openzalo" as const;
+const OPENZALO_REPLY_TRACE_ENV_KEYS = [
+  "OPENZALO_REPLY_TRACE",
+  "OPENZALO_MEDIA_TRACE",
+  "OPENZALO_DEBUG_MEDIA",
+] as const;
 const DEFAULT_GROUP_SYSTEM_PROMPT =
   "When sending media/files in this same group, never claim success unless media is actually attached. " +
   "Prefer the message tool with media/path/filePath. If inlining, use MEDIA:./relative-path or MEDIA:https://... in your reply text. " +
@@ -76,7 +85,88 @@ type OpenClawOutboundRuntime = {
   projectOutboundPayloadPlanForDelivery: (plan: unknown) => ReplyPayload[];
 };
 
+type OpenClawPayloadMediaSequenceInput = {
+  text: string;
+  mediaUrl: string;
+  index: number;
+  isFirst: boolean;
+};
+
+type OpenClawPayloadMediaSequenceParams<TResult> = {
+  text: string;
+  mediaUrls: readonly string[];
+  send: (input: OpenClawPayloadMediaSequenceInput) => Promise<TResult>;
+  fallbackResult: TResult;
+  sendNoMedia?: () => Promise<TResult>;
+};
+
+type OpenClawReplyPayloadRuntime = {
+  resolvePayloadMediaUrls: (payload: ReplyPayload) => string[];
+  sendPayloadMediaSequenceOrFallback: <TResult>(
+    params: OpenClawPayloadMediaSequenceParams<TResult>,
+  ) => Promise<TResult>;
+};
+
+type OpenzaloReplyTraceLogger = (event: string, meta: Record<string, unknown>) => void;
+
+function isTruthyEnvValue(value: string | undefined): boolean {
+  return /^(?:1|true|yes|on)$/i.test(value?.trim() ?? "");
+}
+
+function isOpenzaloReplyTraceEnabled(): boolean {
+  return OPENZALO_REPLY_TRACE_ENV_KEYS.some((key) => isTruthyEnvValue(process.env[key]));
+}
+
+function clipOpenzaloTraceValue(value: string, limit = 240): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
+}
+
+function summarizeOpenzaloReplyPayload(payload: ReplyPayload): Record<string, unknown> {
+  const text = payload.text ?? "";
+  const mediaUrls = payload.mediaUrls?.length
+    ? payload.mediaUrls
+    : payload.mediaUrl
+      ? [payload.mediaUrl]
+      : [];
+  return {
+    textLength: text.length,
+    textPreview: text ? clipOpenzaloTraceValue(text) : undefined,
+    hasMediaDirective: text ? hasOpenzaloMediaDirectives(text) : false,
+    mediaCount: mediaUrls.length,
+    mediaRefs: mediaUrls.slice(0, 5).map((entry) => clipOpenzaloTraceValue(entry, 320)),
+    mediaUrl: payload.mediaUrl ? clipOpenzaloTraceValue(payload.mediaUrl, 320) : undefined,
+    audioAsVoice: payload.audioAsVoice === true || undefined,
+    replyToId: payload.replyToId || undefined,
+  };
+}
+
+function createOpenzaloReplyTraceLogger(params: {
+  runtime: RuntimeEnv;
+  accountId: string;
+  target: string;
+  sessionKey: string;
+}): OpenzaloReplyTraceLogger | undefined {
+  if (!isOpenzaloReplyTraceEnabled()) {
+    return undefined;
+  }
+  return (event, meta) => {
+    const payload = {
+      accountId: params.accountId,
+      target: params.target,
+      sessionKey: params.sessionKey,
+      ...meta,
+    };
+    try {
+      params.runtime.log?.(`[openzalo/reply-trace] ${event} ${JSON.stringify(payload)}`);
+    } catch {
+      params.runtime.log?.(`[openzalo/reply-trace] ${event}`);
+    }
+  };
+}
+
 let outboundRuntimePromise: Promise<OpenClawOutboundRuntime | null> | undefined;
+let replyPayloadRuntimePromise: Promise<OpenClawReplyPayloadRuntime | null> | undefined;
 
 function isMissingOpenClawOutboundRuntime(error: unknown): boolean {
   return (
@@ -98,6 +188,26 @@ function isOpenClawOutboundRuntime(value: unknown): value is OpenClawOutboundRun
   );
 }
 
+function isMissingOpenClawReplyPayloadRuntime(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "ERR_MODULE_NOT_FOUND" &&
+    error instanceof Error &&
+    /openclaw(?:\/plugin-sdk\/reply-payload)?/i.test(error.message)
+  );
+}
+
+function isOpenClawReplyPayloadRuntime(value: unknown): value is OpenClawReplyPayloadRuntime {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as OpenClawReplyPayloadRuntime).resolvePayloadMediaUrls === "function" &&
+    typeof (value as OpenClawReplyPayloadRuntime).sendPayloadMediaSequenceOrFallback === "function"
+  );
+}
+
 async function loadOpenClawOutboundRuntime(): Promise<OpenClawOutboundRuntime | null> {
   outboundRuntimePromise ??= import("openclaw/plugin-sdk/outbound-runtime")
     .then((mod) => (isOpenClawOutboundRuntime(mod) ? mod : null))
@@ -110,12 +220,71 @@ async function loadOpenClawOutboundRuntime(): Promise<OpenClawOutboundRuntime | 
   return outboundRuntimePromise;
 }
 
+async function loadOpenClawReplyPayloadRuntime(): Promise<OpenClawReplyPayloadRuntime | null> {
+  replyPayloadRuntimePromise ??= import("openclaw/plugin-sdk/reply-payload")
+    .then((mod) => (isOpenClawReplyPayloadRuntime(mod) ? mod : null))
+    .catch((error) => {
+      if (isMissingOpenClawReplyPayloadRuntime(error)) {
+        return null;
+      }
+      throw error;
+    });
+  return replyPayloadRuntimePromise;
+}
+
+function resolveOpenzaloPayloadMediaUrlsFallback(payload: ReplyPayload): string[] {
+  if (payload.mediaUrls?.length) {
+    return payload.mediaUrls;
+  }
+  if (payload.mediaUrl) {
+    return [payload.mediaUrl];
+  }
+  return [];
+}
+
+async function resolveOpenzaloPayloadMediaUrls(payload: ReplyPayload): Promise<string[]> {
+  const runtime = await loadOpenClawReplyPayloadRuntime();
+  return runtime?.resolvePayloadMediaUrls(payload) ??
+    resolveOpenzaloPayloadMediaUrlsFallback(payload);
+}
+
+async function sendOpenzaloPayloadMediaSequenceOrFallback<TResult>(
+  params: OpenClawPayloadMediaSequenceParams<TResult>,
+): Promise<TResult> {
+  const runtime = await loadOpenClawReplyPayloadRuntime();
+  if (runtime) {
+    return await runtime.sendPayloadMediaSequenceOrFallback(params);
+  }
+
+  if (params.mediaUrls.length === 0) {
+    return params.sendNoMedia ? await params.sendNoMedia() : params.fallbackResult;
+  }
+
+  let lastResult: TResult | undefined;
+  for (let index = 0; index < params.mediaUrls.length; index += 1) {
+    const mediaUrl = params.mediaUrls[index];
+    if (!mediaUrl) {
+      continue;
+    }
+    lastResult = await params.send({
+      text: index === 0 ? params.text : "",
+      mediaUrl,
+      index,
+      isFirst: index === 0,
+    });
+  }
+  return lastResult ?? params.fallbackResult;
+}
+
 async function normalizeOpenzaloReplyPayloadsForDelivery(params: {
   payload: ReplyPayload;
   cfg: CoreConfig;
   sessionKey: string;
+  trace?: OpenzaloReplyTraceLogger;
 }): Promise<ReplyPayload[]> {
+  params.trace?.("normalize.input", summarizeOpenzaloReplyPayload(params.payload));
   const parsedPayload = parseOpenzaloMediaDirectives(params.payload);
+  params.trace?.("normalize.afterOpenzaloParser", summarizeOpenzaloReplyPayload(parsedPayload));
   const outboundRuntime = await loadOpenClawOutboundRuntime();
   if (outboundRuntime) {
     const planned = outboundRuntime.projectOutboundPayloadPlanForDelivery(
@@ -125,9 +294,17 @@ async function normalizeOpenzaloReplyPayloadsForDelivery(params: {
         surface: CHANNEL_ID,
       }),
     );
-    return planned.map((payload) => parseOpenzaloMediaDirectives(payload));
+    const reparsed = planned.map((payload) => parseOpenzaloMediaDirectives(payload));
+    params.trace?.("normalize.afterOutboundRuntime", {
+      payloadCount: reparsed.length,
+      payloads: reparsed.map(summarizeOpenzaloReplyPayload),
+    });
+    return reparsed;
   }
 
+  params.trace?.("normalize.outboundRuntimeMissing", {
+    payloadCount: 1,
+  });
   return [parsedPayload];
 }
 
@@ -281,6 +458,7 @@ async function deliverOpenzaloReply(params: {
   payload: ReplyPayload;
   target: string;
   sessionKey: string;
+  storePath?: string;
   account: ResolvedOpenzaloAccount;
   cfg: CoreConfig;
   runtime: RuntimeEnv;
@@ -288,68 +466,100 @@ async function deliverOpenzaloReply(params: {
 }): Promise<OpenzaloSendReceipt[]> {
   const { target, sessionKey, account, cfg, runtime, statusSink } = params;
   const receipts: OpenzaloSendReceipt[] = [];
-  const payloads = await normalizeOpenzaloReplyPayloadsForDelivery({
+  const trace = createOpenzaloReplyTraceLogger({
+    runtime,
+    accountId: account.accountId,
+    target,
+    sessionKey,
+  });
+  const normalizedPayloads = await normalizeOpenzaloReplyPayloadsForDelivery({
     payload: params.payload,
     cfg,
     sessionKey,
+    trace,
+  });
+  const payloads: ReplyPayload[] = [];
+  for (const payload of normalizedPayloads) {
+    payloads.push(
+      (await recoverOpenzaloMediaPayloadFromSession({
+        storePath: params.storePath,
+        sessionKey,
+        payload,
+        trace,
+      })) ?? payload,
+    );
+  }
+  trace?.("delivery.normalized", {
+    payloadCount: payloads.length,
+    payloads: payloads.map(summarizeOpenzaloReplyPayload),
   });
 
   for (const payload of payloads) {
-    const mediaList = payload.mediaUrls?.length
-      ? payload.mediaUrls
-      : payload.mediaUrl
-        ? [payload.mediaUrl]
-        : [];
+    const mediaList = await resolveOpenzaloPayloadMediaUrls(payload);
     const text = payload.text?.trim() ?? "";
 
     if (!text && mediaList.length === 0) {
+      trace?.("delivery.skipEmpty", summarizeOpenzaloReplyPayload(payload));
       continue;
     }
 
     if (mediaList.length > 0) {
-      let first = true;
-      for (const mediaUrl of mediaList) {
-        const caption = first ? text : undefined;
-        const dedupe = acquireOpenzaloOutboundDedupeSlot({
-          accountId: account.accountId,
-          sessionKey,
-          target,
-          kind: "media",
-          text: caption,
-          mediaRef: mediaUrl,
-        });
-        if (!dedupe.acquired) {
-          runtime.log?.(
-            `[${account.accountId}] openzalo skip duplicate media send (${dedupe.reason}) target=${target}`,
-          );
-          continue;
-        }
-
-        let sent = false;
-        try {
-          const result = await sendMediaOpenzalo({
-            cfg,
-            account,
-            to: target,
-            mediaUrl,
+      trace?.("delivery.sendMedia", {
+        mediaCount: mediaList.length,
+        hasCaption: Boolean(text),
+        mediaRefs: mediaList.slice(0, 5).map((entry) => clipOpenzaloTraceValue(entry, 320)),
+      });
+      await sendOpenzaloPayloadMediaSequenceOrFallback<OpenzaloSendReceipt>({
+        text,
+        mediaUrls: mediaList,
+        fallbackResult: { messageId: "empty", kind: "media" },
+        send: async ({ text: captionText, mediaUrl }) => {
+          const caption = captionText.trim() || undefined;
+          const dedupe = acquireOpenzaloOutboundDedupeSlot({
+            accountId: account.accountId,
+            sessionKey,
+            target,
+            kind: "media",
             text: caption,
-            mediaLocalRoots: account.config.mediaLocalRoots,
+            mediaRef: mediaUrl,
           });
-          receipts.push(...(result.receipts.length > 0 ? result.receipts : [result]));
-          sent = true;
-          first = false;
-          statusSink?.({ lastOutboundAt: Date.now() });
-        } finally {
-          releaseOpenzaloOutboundDedupeSlot({
-            ticket: dedupe.ticket,
-            sent,
-          });
-        }
-      }
+          if (!dedupe.acquired) {
+            runtime.log?.(
+              `[${account.accountId}] openzalo skip duplicate media send (${dedupe.reason}) target=${target}`,
+            );
+            return { messageId: "duplicate", kind: "media" };
+          }
+
+          let sent = false;
+          try {
+            const result = await sendMediaOpenzalo({
+              cfg,
+              account,
+              to: target,
+              mediaUrl,
+              text: caption,
+              mediaLocalRoots: account.config.mediaLocalRoots,
+            });
+            receipts.push(...(result.receipts.length > 0 ? result.receipts : [result]));
+            sent = true;
+            statusSink?.({ lastOutboundAt: Date.now() });
+            return result;
+          } finally {
+            releaseOpenzaloOutboundDedupeSlot({
+              ticket: dedupe.ticket,
+              sent,
+            });
+          }
+        },
+      });
       continue;
     }
 
     if (text) {
+      trace?.("delivery.sendText", {
+        textLength: text.length,
+        textPreview: clipOpenzaloTraceValue(text),
+      });
       const limit = account.config.textChunkLimit && account.config.textChunkLimit > 0
         ? account.config.textChunkLimit
         : 1800;
@@ -407,6 +617,7 @@ async function deliverAndRememberOpenzaloReply(params: {
   payload: ReplyPayload;
   target: string;
   sessionKey: string;
+  storePath?: string;
   account: ResolvedOpenzaloAccount;
   cfg: CoreConfig;
   runtime: RuntimeEnv;
@@ -936,6 +1147,7 @@ export async function handleOpenzaloInbound(params: {
       payload: acpCommandResult.payload,
       target: outboundTarget,
       sessionKey: activeSessionKey,
+      storePath,
       account,
       cfg,
       runtime,
@@ -957,6 +1169,7 @@ export async function handleOpenzaloInbound(params: {
       payload: acpPayload,
       target: outboundTarget,
       sessionKey: boundAcpBinding.sessionKey,
+      storePath,
       account,
       cfg,
       runtime,
@@ -991,6 +1204,7 @@ export async function handleOpenzaloInbound(params: {
           payload,
           target: outboundTarget,
           sessionKey: route.sessionKey,
+          storePath,
           account,
           cfg,
           runtime,

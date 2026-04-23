@@ -60,6 +60,8 @@ test("OpenZalo reply pipeline owns MEDIA directive delivery", async () => {
   assert.match(channelSource, /transformReplyPayload:\s*\(\{\s*payload\s*\}\)\s*=>\s*parseOpenzaloMediaDirectives\(payload\)/);
   assert.match(inboundSource, /transformReplyPayload:\s*parseOpenzaloMediaDirectives/);
   assert.match(inboundSource, /const parsedPayload = parseOpenzaloMediaDirectives\(params\.payload\)/);
+  assert.match(inboundSource, /openclaw\/plugin-sdk\/reply-payload/);
+  assert.match(inboundSource, /sendOpenzaloPayloadMediaSequenceOrFallback<OpenzaloSendReceipt>/);
 });
 
 test("OpenZalo disables generic block streaming unless explicitly enabled", async () => {
