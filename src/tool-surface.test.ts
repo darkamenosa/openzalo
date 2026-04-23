@@ -53,6 +53,23 @@ test("OpenZalo docs point native mention member lookup to the openzca skill", as
   assert.match(openzcaSkillDoc, /@userId/i);
 });
 
+test("OpenZalo reply pipeline owns MEDIA directive delivery", async () => {
+  const channelSource = await readRepoFile("src/channel.ts");
+  const inboundSource = await readRepoFile("src/inbound.ts");
+
+  assert.match(channelSource, /transformReplyPayload:\s*\(\{\s*payload\s*\}\)\s*=>\s*parseOpenzaloMediaDirectives\(payload\)/);
+  assert.match(inboundSource, /transformReplyPayload:\s*parseOpenzaloMediaDirectives/);
+  assert.match(inboundSource, /const parsedPayload = parseOpenzaloMediaDirectives\(params\.payload\)/);
+});
+
+test("OpenZalo disables generic block streaming unless explicitly enabled", async () => {
+  const inboundSource = await readRepoFile("src/inbound.ts");
+
+  assert.match(inboundSource, /resolveOpenzaloDisableBlockStreaming/);
+  assert.match(inboundSource, /config\.blockStreaming === true \? false : true/);
+  assert.match(inboundSource, /disableBlockStreaming:\s*resolveOpenzaloDisableBlockStreaming\(account\.config\)/);
+});
+
 test("OpenZalo skill docs describe DB-backed reads and media CLI behavior", async () => {
   const skillDoc = await readRepoFile("skills/openzca/SKILL.md");
 

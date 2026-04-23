@@ -39,6 +39,7 @@ import { OpenzaloChannelConfigSchema } from "./config-schema.js";
 import { collectOpenzaloStatusIssues, resolveOpenzaloAccountState } from "./status.js";
 import { runOpenzcaCommand, runOpenzcaInteractive } from "./openzca.js";
 import { normalizeResolvedGroupTarget, normalizeResolvedUserTarget } from "./resolver-target.js";
+import { parseOpenzaloMediaDirectives } from "./reply-payload-transform.js";
 import type { CoreConfig, OpenzaloProbe, ResolvedOpenzaloAccount } from "./types.js";
 
 const meta = {
@@ -188,6 +189,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
       "- OpenZalo `member-info`: pass only `userId` (no `target`/`to`).",
       "- Do not reply with `NO_REPLY` after non-send actions. Use `NO_REPLY` only when `action=send` already contains the full user-facing response.",
       "- If an action fails, send a concise failure summary naming the action and error reason.",
+      "- OpenZalo media: prefer the message tool with media/path/filePath for generated images or files. If you inline media, keep `MEDIA:<path-or-url>` on its own line with a safe workspace path.",
       "- Restart recovery: if recent history shows tool actions completed but no assistant confirmation (for example after interruption/restart), send a brief recovery summary of completed and failed actions before handling the new request.",
     ],
   },
@@ -275,6 +277,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
   },
   messaging: {
     normalizeTarget: normalizeOpenzaloMessagingTarget,
+    transformReplyPayload: ({ payload }) => parseOpenzaloMediaDirectives(payload),
     targetResolver: {
       looksLikeId: looksLikeOpenzaloTargetId,
       hint: "<userId|group:groupId>",

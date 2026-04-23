@@ -61,7 +61,7 @@ import { dedupeStrings } from "./utils/dedupe-strings.js";
 const CHANNEL_ID = "openzalo" as const;
 const DEFAULT_GROUP_SYSTEM_PROMPT =
   "When sending media/files in this same group, never claim success unless media is actually attached. " +
-  "Prefer MEDIA:./relative-path or MEDIA:https://... in your reply text. " +
+  "Prefer the message tool with media/path/filePath. If inlining, use MEDIA:./relative-path or MEDIA:https://... in your reply text. " +
   "If the source file is outside workspace, copy it into workspace first and then use a relative MEDIA path.";
 
 type OpenClawOutboundRuntime = {
@@ -115,18 +115,26 @@ async function normalizeOpenzaloReplyPayloadsForDelivery(params: {
   cfg: CoreConfig;
   sessionKey: string;
 }): Promise<ReplyPayload[]> {
+  const parsedPayload = parseOpenzaloMediaDirectives(params.payload);
   const outboundRuntime = await loadOpenClawOutboundRuntime();
   if (outboundRuntime) {
-    return outboundRuntime.projectOutboundPayloadPlanForDelivery(
-      outboundRuntime.createOutboundPayloadPlan([params.payload], {
+    const planned = outboundRuntime.projectOutboundPayloadPlanForDelivery(
+      outboundRuntime.createOutboundPayloadPlan([parsedPayload], {
         cfg: params.cfg,
         sessionKey: params.sessionKey,
         surface: CHANNEL_ID,
       }),
     );
+    return planned.map((payload) => parseOpenzaloMediaDirectives(payload));
   }
 
-  return [parseOpenzaloMediaDirectives(params.payload)];
+  return [parsedPayload];
+}
+
+export function resolveOpenzaloDisableBlockStreaming(config: {
+  blockStreaming?: boolean;
+}): boolean {
+  return config.blockStreaming === true ? false : true;
 }
 
 function nextOpenzaloOutboundSequence(map: Map<string, number>, key: string): number {
@@ -969,6 +977,7 @@ export async function handleOpenzaloInbound(params: {
     agentId: route.agentId,
     channel: CHANNEL_ID,
     accountId: account.accountId,
+    transformReplyPayload: parseOpenzaloMediaDirectives,
   });
 
   const dispatchResult = await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
@@ -995,10 +1004,7 @@ export async function handleOpenzaloInbound(params: {
     replyOptions: {
       skillFilter: message.isGroup ? groupMatch.groupConfig?.skills : undefined,
       onModelSelected,
-      disableBlockStreaming:
-        typeof account.config.blockStreaming === "boolean"
-          ? !account.config.blockStreaming
-          : undefined,
+      disableBlockStreaming: resolveOpenzaloDisableBlockStreaming(account.config),
     },
   });
   if (groupHistoryKey && pendingGroupHistory.length > 0) {
