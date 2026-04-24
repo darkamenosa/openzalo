@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026.4.24-1
+
+### Fixed
+
+- Included the routed agent workspace in OpenZalo inbound reply media roots, fixing group replies that emit workspace-relative `MEDIA:media/outbound/...` attachments.
+
 ## 2026.4.24
 
 ### Fixed

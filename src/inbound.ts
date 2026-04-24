@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import {
   createChannelPairingController,
   createChannelReplyPipeline,
@@ -107,7 +109,24 @@ type OpenClawReplyPayloadRuntime = {
   ) => Promise<TResult>;
 };
 
+type OpenClawAgentMediaRuntime = {
+  getAgentScopedMediaLocalRoots: (cfg: CoreConfig, agentId?: string) => readonly string[];
+};
+
 type OpenzaloReplyTraceLogger = (event: string, meta: Record<string, unknown>) => void;
+
+type OpenzaloAgentEntryLike = {
+  id?: unknown;
+  default?: unknown;
+  workspace?: unknown;
+};
+
+type OpenzaloAgentsConfigLike = {
+  defaults?: {
+    workspace?: unknown;
+  };
+  list?: unknown;
+};
 
 function isTruthyEnvValue(value: string | undefined): boolean {
   return /^(?:1|true|yes|on)$/i.test(value?.trim() ?? "");
@@ -167,6 +186,7 @@ function createOpenzaloReplyTraceLogger(params: {
 
 let outboundRuntimePromise: Promise<OpenClawOutboundRuntime | null> | undefined;
 let replyPayloadRuntimePromise: Promise<OpenClawReplyPayloadRuntime | null> | undefined;
+let agentMediaRuntimePromise: Promise<OpenClawAgentMediaRuntime | null> | undefined;
 
 function isMissingOpenClawOutboundRuntime(error: unknown): boolean {
   return (
@@ -199,12 +219,32 @@ function isMissingOpenClawReplyPayloadRuntime(error: unknown): boolean {
   );
 }
 
+function isMissingOpenClawAgentMediaRuntime(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    error instanceof Error &&
+    "code" in error &&
+    ((error as { code?: string }).code === "ERR_MODULE_NOT_FOUND" ||
+      (error as { code?: string }).code === "ERR_PACKAGE_PATH_NOT_EXPORTED") &&
+    /openclaw(?:\/plugin-sdk\/(?:agent-media-payload|media-runtime))?/i.test(error.message)
+  );
+}
+
 function isOpenClawReplyPayloadRuntime(value: unknown): value is OpenClawReplyPayloadRuntime {
   return (
     typeof value === "object" &&
     value !== null &&
     typeof (value as OpenClawReplyPayloadRuntime).resolvePayloadMediaUrls === "function" &&
     typeof (value as OpenClawReplyPayloadRuntime).sendPayloadMediaSequenceOrFallback === "function"
+  );
+}
+
+function isOpenClawAgentMediaRuntime(value: unknown): value is OpenClawAgentMediaRuntime {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as OpenClawAgentMediaRuntime).getAgentScopedMediaLocalRoots === "function"
   );
 }
 
@@ -230,6 +270,122 @@ async function loadOpenClawReplyPayloadRuntime(): Promise<OpenClawReplyPayloadRu
       throw error;
     });
   return replyPayloadRuntimePromise;
+}
+
+async function loadOpenClawAgentMediaRuntime(): Promise<OpenClawAgentMediaRuntime | null> {
+  agentMediaRuntimePromise ??= import("openclaw/plugin-sdk/agent-media-payload")
+    .then((mod) => (isOpenClawAgentMediaRuntime(mod) ? mod : null))
+    .catch((error) => {
+      if (isMissingOpenClawAgentMediaRuntime(error)) {
+        return null;
+      }
+      throw error;
+    });
+  return agentMediaRuntimePromise;
+}
+
+function toOpenzaloOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeOpenzaloAgentId(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function listOpenzaloAgentEntries(cfg: CoreConfig): OpenzaloAgentEntryLike[] {
+  const agents = (cfg.agents ?? {}) as OpenzaloAgentsConfigLike;
+  return Array.isArray(agents.list)
+    ? agents.list.filter(
+        (entry): entry is OpenzaloAgentEntryLike =>
+          typeof entry === "object" && entry !== null,
+      )
+    : [];
+}
+
+function resolveOpenzaloUserPath(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed === "~") {
+    return os.homedir();
+  }
+  if (trimmed.startsWith("~/") || trimmed.startsWith(`~${path.sep}`)) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+  return trimmed;
+}
+
+function resolveOpenzaloDefaultAgentId(cfg: CoreConfig): string {
+  const entries = listOpenzaloAgentEntries(cfg);
+  const defaultEntry = entries.find((entry) => entry.default === true) ?? entries[0];
+  return normalizeOpenzaloAgentId(defaultEntry?.id) || "main";
+}
+
+function resolveOpenzaloAgentWorkspaceDir(cfg: CoreConfig, agentId?: string): string {
+  const id = normalizeOpenzaloAgentId(agentId) || resolveOpenzaloDefaultAgentId(cfg);
+  const configured = toOpenzaloOptionalString(
+    listOpenzaloAgentEntries(cfg).find((entry) => normalizeOpenzaloAgentId(entry.id) === id)
+      ?.workspace,
+  );
+  if (configured) {
+    return path.resolve(resolveOpenzaloUserPath(configured));
+  }
+
+  const defaultWorkspace = toOpenzaloOptionalString(
+    ((cfg.agents ?? {}) as OpenzaloAgentsConfigLike).defaults?.workspace,
+  );
+  if (defaultWorkspace) {
+    const base = path.resolve(resolveOpenzaloUserPath(defaultWorkspace));
+    return id === resolveOpenzaloDefaultAgentId(cfg) ? base : path.join(base, id);
+  }
+
+  const stateDir = resolveOpenzaloStateDir(process.env);
+  return id === resolveOpenzaloDefaultAgentId(cfg)
+    ? path.join(stateDir, "workspace")
+    : path.join(stateDir, `workspace-${id}`);
+}
+
+function resolveOpenzaloFallbackAgentMediaLocalRoots(
+  cfg: CoreConfig,
+  agentId?: string,
+): readonly string[] {
+  const stateDir = resolveOpenzaloStateDir(process.env);
+  return [
+    path.join(stateDir, "workspace"),
+    path.join(stateDir, "media"),
+    path.join(stateDir, "agents"),
+    path.join(stateDir, "sandboxes"),
+    resolveOpenzaloAgentWorkspaceDir(cfg, agentId),
+  ];
+}
+
+function dedupeOpenzaloMediaRoots(roots: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const root of roots) {
+    const trimmed = root.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+export async function resolveOpenzaloReplyMediaLocalRoots(params: {
+  cfg: CoreConfig;
+  account: ResolvedOpenzaloAccount;
+  agentId?: string;
+}): Promise<string[] | undefined> {
+  const runtimeRoots =
+    (await loadOpenClawAgentMediaRuntime())?.getAgentScopedMediaLocalRoots(
+      params.cfg,
+      params.agentId,
+    ) ?? resolveOpenzaloFallbackAgentMediaLocalRoots(params.cfg, params.agentId);
+  const roots = dedupeOpenzaloMediaRoots([
+    ...(params.account.config.mediaLocalRoots ?? []),
+    ...runtimeRoots,
+  ]);
+  return roots.length > 0 ? roots : undefined;
 }
 
 function resolveOpenzaloPayloadMediaUrlsFallback(payload: ReplyPayload): string[] {
@@ -461,6 +617,7 @@ async function deliverOpenzaloReply(params: {
   storePath?: string;
   account: ResolvedOpenzaloAccount;
   cfg: CoreConfig;
+  agentId?: string;
   runtime: RuntimeEnv;
   statusSink?: (patch: { lastOutboundAt?: number }) => void;
 }): Promise<OpenzaloSendReceipt[]> {
@@ -504,10 +661,16 @@ async function deliverOpenzaloReply(params: {
     }
 
     if (mediaList.length > 0) {
+      const deliveryMediaLocalRoots = await resolveOpenzaloReplyMediaLocalRoots({
+        cfg,
+        account,
+        agentId: params.agentId ?? resolveAgentIdFromSessionKey(sessionKey),
+      });
       trace?.("delivery.sendMedia", {
         mediaCount: mediaList.length,
         hasCaption: Boolean(text),
         mediaRefs: mediaList.slice(0, 5).map((entry) => clipOpenzaloTraceValue(entry, 320)),
+        mediaLocalRootCount: deliveryMediaLocalRoots?.length ?? 0,
       });
       await sendOpenzaloPayloadMediaSequenceOrFallback<OpenzaloSendReceipt>({
         text,
@@ -538,7 +701,7 @@ async function deliverOpenzaloReply(params: {
               to: target,
               mediaUrl,
               text: caption,
-              mediaLocalRoots: account.config.mediaLocalRoots,
+              mediaLocalRoots: deliveryMediaLocalRoots,
             });
             receipts.push(...(result.receipts.length > 0 ? result.receipts : [result]));
             sent = true;
@@ -620,6 +783,7 @@ async function deliverAndRememberOpenzaloReply(params: {
   storePath?: string;
   account: ResolvedOpenzaloAccount;
   cfg: CoreConfig;
+  agentId?: string;
   runtime: RuntimeEnv;
   statusSink?: (patch: { lastOutboundAt?: number }) => void;
 }): Promise<void> {
@@ -1207,6 +1371,7 @@ export async function handleOpenzaloInbound(params: {
           storePath,
           account,
           cfg,
+          agentId: route.agentId,
           runtime,
           statusSink,
         });
