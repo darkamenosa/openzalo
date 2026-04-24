@@ -12,8 +12,15 @@ export type LoadedOutboundMediaCompat = {
   fileName?: string;
 };
 
+export type OutboundMediaAccessCompat = {
+  localRoots?: readonly string[];
+  readFile?: (filePath: string) => Promise<Buffer>;
+  workspaceDir?: string;
+};
+
 type LoadOutboundMediaCompatOptions = {
   maxBytes?: number;
+  mediaAccess?: OutboundMediaAccessCompat;
   mediaLocalRoots?: readonly string[];
   mediaReadFile?: (filePath: string) => Promise<Buffer>;
 };
@@ -72,6 +79,19 @@ function normalizeLocalPath(input: string): string {
     return fileURLToPath(trimmed);
   }
   return path.resolve(expandHomePath(trimmed));
+}
+
+function normalizeMediaUrlForFallback(mediaUrl: string, workspaceDir?: string): string {
+  const expanded = expandHomePath(mediaUrl);
+  if (
+    workspaceDir &&
+    expanded &&
+    !path.isAbsolute(expanded) &&
+    !/^[a-zA-Z]:[\\/]/.test(expanded)
+  ) {
+    return path.resolve(workspaceDir, expanded);
+  }
+  return expanded;
 }
 
 function isPathInsideRoot(candidate: string, root: string): boolean {
@@ -137,6 +157,7 @@ export async function loadOutboundMediaFromUrlCompat(
     };
     return await sdk.loadOutboundMediaFromUrl(mediaUrl, {
       maxBytes: options.maxBytes,
+      mediaAccess: options.mediaAccess,
       mediaLocalRoots: options.mediaLocalRoots,
       mediaReadFile: options.mediaReadFile,
     });
@@ -152,11 +173,14 @@ export async function loadOutboundMediaFromUrlCompat(
     );
   }
 
-  const localPath = options.mediaReadFile
-    ? normalizeLocalPath(mediaUrl)
-    : await assertFallbackLocalMediaAllowed(mediaUrl, options.mediaLocalRoots);
-  const buffer = options.mediaReadFile
-    ? await options.mediaReadFile(localPath)
+  const fallbackMediaUrl = normalizeMediaUrlForFallback(mediaUrl, options.mediaAccess?.workspaceDir);
+  const readFile = options.mediaAccess?.readFile ?? options.mediaReadFile;
+  const localRoots = options.mediaAccess?.localRoots ?? options.mediaLocalRoots;
+  const localPath = readFile
+    ? normalizeLocalPath(fallbackMediaUrl)
+    : await assertFallbackLocalMediaAllowed(fallbackMediaUrl, localRoots);
+  const buffer = readFile
+    ? await readFile(localPath)
     : await fs.readFile(localPath);
   if (typeof options.maxBytes === "number" && buffer.byteLength > options.maxBytes) {
     throw new Error(`Media exceeds ${formatMediaLimit(options.maxBytes)} limit`);

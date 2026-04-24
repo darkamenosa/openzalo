@@ -496,15 +496,22 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
       };
     },
     sendMedia: async (ctx) => {
-      const { cfg, to, text, mediaUrl, mediaLocalRoots, mediaReadFile, accountId } = ctx;
+      const { cfg, to, text, mediaUrl, mediaAccess, mediaLocalRoots, mediaReadFile, accountId } = ctx;
       const { mediaPath } = ctx as { mediaPath?: string };
       const account = resolveAccount(cfg, accountId);
       const mergedMediaLocalRoots = Array.from(
         new Set([
           ...(account.config.mediaLocalRoots ?? []),
+          ...(mediaAccess?.localRoots ?? []),
           ...(mediaLocalRoots ?? []),
         ]),
       );
+      const mergedMediaAccess = mediaAccess
+        ? {
+            ...mediaAccess,
+            ...(mergedMediaLocalRoots.length > 0 ? { localRoots: mergedMediaLocalRoots } : {}),
+          }
+        : undefined;
       const result = await sendMediaOpenzalo({
         cfg: cfg as CoreConfig,
         account,
@@ -512,6 +519,7 @@ export const openzaloPlugin: ChannelPlugin<ResolvedOpenzaloAccount, OpenzaloProb
         text,
         mediaUrl,
         mediaPath,
+        mediaAccess: mergedMediaAccess,
         mediaLocalRoots: mergedMediaLocalRoots.length > 0 ? mergedMediaLocalRoots : undefined,
         mediaReadFile,
       });

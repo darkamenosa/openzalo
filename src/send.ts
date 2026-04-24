@@ -2,7 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadOutboundMediaFromUrlCompat, type LoadedOutboundMediaKind } from "./outbound-media-compat.js";
+import {
+  loadOutboundMediaFromUrlCompat,
+  type LoadedOutboundMediaKind,
+  type OutboundMediaAccessCompat,
+} from "./outbound-media-compat.js";
 import { parseOpenzaloTarget } from "./normalize.js";
 import { runOpenzcaAccountCommand } from "./openzca-account.js";
 import { resolvePreferredOpenClawTmpDirCompat } from "./preferred-tmp-dir.js";
@@ -24,6 +28,7 @@ type SendMediaOptions = {
   text?: string;
   mediaUrl?: string;
   mediaPath?: string;
+  mediaAccess?: OutboundMediaAccessCompat;
   mediaLocalRoots?: readonly string[];
   mediaReadFile?: (filePath: string) => Promise<Buffer>;
 };
@@ -156,8 +161,14 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+function isOpenClawMediaStorePath(source: string): boolean {
+  const parts = source.split(/[\\/]/).filter((part) => part && part !== ".");
+  return parts[0] === "media";
+}
+
 async function resolveMediaLoadSource(params: {
   source: string;
+  mediaAccess?: OutboundMediaAccessCompat;
   mediaLocalRoots: readonly string[];
 }): Promise<string> {
   if (!params.source || isHttpUrl(params.source)) {
@@ -169,8 +180,14 @@ async function resolveMediaLoadSource(params: {
   }
 
   const candidates = [path.resolve(normalized)];
+  if (params.mediaAccess?.workspaceDir) {
+    candidates.push(path.resolve(params.mediaAccess.workspaceDir, normalized));
+  }
   for (const root of params.mediaLocalRoots) {
     candidates.push(path.resolve(root, normalized));
+    if (path.basename(root) === "media" && isOpenClawMediaStorePath(normalized)) {
+      candidates.push(path.resolve(path.dirname(root), normalized));
+    }
   }
 
   const seen = new Set<string>();
@@ -190,6 +207,7 @@ async function resolveMediaLoadSource(params: {
 async function stageMediaSource(params: {
   account: ResolvedOpenzaloAccount;
   source: string;
+  mediaAccess?: OutboundMediaAccessCompat;
   mediaLocalRoots?: readonly string[];
   mediaReadFile?: (filePath: string) => Promise<Buffer>;
 }): Promise<{
@@ -206,10 +224,12 @@ async function stageMediaSource(params: {
   const maxBytes = resolveOpenzaloMediaMaxBytes(params.account);
   const loadSource = await resolveMediaLoadSource({
     source: normalized,
+    mediaAccess: params.mediaAccess,
     mediaLocalRoots,
   });
   const loaded = await loadOutboundMediaFromUrlCompat(loadSource, {
     maxBytes,
+    mediaAccess: params.mediaAccess,
     mediaLocalRoots,
     mediaReadFile: params.mediaReadFile,
   });
@@ -384,7 +404,7 @@ export async function sendTextOpenzalo(options: SendTextOptions): Promise<Openza
 export async function sendMediaOpenzalo(
   options: SendMediaOptions,
 ): Promise<OpenzaloSendReceipt & { receipts: OpenzaloSendReceipt[] }> {
-  const { account, to, text, mediaUrl, mediaPath, mediaLocalRoots, mediaReadFile } = options;
+  const { account, to, text, mediaUrl, mediaPath, mediaAccess, mediaLocalRoots, mediaReadFile } = options;
   const target = parseOpenzaloTarget(to);
   const rawSource = (mediaPath ?? mediaUrl ?? "").trim();
   if (!rawSource) {
@@ -410,6 +430,7 @@ export async function sendMediaOpenzalo(
   const resolvedSource = await stageMediaSource({
     account,
     source: rawSource,
+    mediaAccess,
     mediaLocalRoots,
     mediaReadFile,
   });

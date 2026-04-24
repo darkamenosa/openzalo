@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.4.24
+
+### Fixed
+
+- Resolved OpenClaw `MEDIA:media/outbound/...` reply attachments against the state media store before invoking `openzca`, fixing generated image delivery in OpenZalo group chats.
+- Forwarded host-provided media access metadata through the OpenZalo outbound adapter so workspace-relative media paths can be loaded by the shared OpenClaw media pipeline.
+
 ## 2026.4.23
 
 ### Changed

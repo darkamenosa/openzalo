@@ -428,3 +428,177 @@ process.stdout.write(JSON.stringify({ msgId: "video-1" }));
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("sendMediaOpenzalo resolves OpenClaw media/outbound paths under a media root", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openzalo-send-media-store-test-"));
+  const stagedDir = path.join(tempDir, "staged");
+  const mediaRoot = path.join(tempDir, "media");
+  const mediaPath = path.join(mediaRoot, "outbound", "poster.png");
+  const scriptPath = path.join(tempDir, "mock-openzca.mjs");
+  const logPath = path.join(tempDir, "calls.jsonl");
+
+  try {
+    installRuntime(stagedDir);
+    await fs.mkdir(path.dirname(mediaPath), { recursive: true });
+    await fs.writeFile(mediaPath, "image");
+    const stagedMediaPath = path.join(stagedDir, "poster.png");
+    await fs.writeFile(
+      scriptPath,
+      `#!/usr/bin/env node
+import fs from "node:fs/promises";
+
+const args = process.argv.slice(2);
+await fs.appendFile(${JSON.stringify(logPath)}, JSON.stringify(args) + "\\n");
+
+const command = args.slice(2, 4).join(" ");
+if (command === "msg image") {
+  process.stdout.write(JSON.stringify({ msgId: "image-1" }));
+} else if (command === "msg send") {
+  process.stdout.write(JSON.stringify({ msgId: "caption-1", cliMsgId: "caption-cli-1" }));
+} else {
+  process.stdout.write(JSON.stringify({ msgId: "other-1" }));
+}
+`,
+      { mode: 0o755 },
+    );
+
+    const result = await sendMediaOpenzalo({
+      cfg: {},
+      account: {
+        ...account,
+        zcaBinary: scriptPath,
+      },
+      to: "group:123",
+      text: "Image caption",
+      mediaUrl: "MEDIA:media/outbound/poster.png",
+      mediaLocalRoots: [mediaRoot],
+    });
+
+    const rawCalls = await fs.readFile(logPath, "utf8");
+    const calls = rawCalls
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[]);
+
+    assert.deepStrictEqual(calls, [
+      ["--profile", "default", "msg", "image", "123", stagedMediaPath, "--group"],
+      ["--profile", "default", "msg", "send", "123", "Image caption", "--group"],
+    ]);
+    assert.equal(result.msgId, "caption-1");
+    assert.equal(result.cliMsgId, "caption-cli-1");
+    assert.deepStrictEqual(result.receipts.map((entry) => entry.msgId), ["image-1", "caption-1"]);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("sendMediaOpenzalo resolves OpenClaw media/outbound paths from the default state media root", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openzalo-send-state-media-test-"));
+  const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+  const stagedDir = path.join(tempDir, "staged");
+  const mediaPath = path.join(tempDir, "media", "outbound", "poster.png");
+  const scriptPath = path.join(tempDir, "mock-openzca.mjs");
+  const logPath = path.join(tempDir, "calls.jsonl");
+
+  try {
+    process.env.OPENCLAW_STATE_DIR = tempDir;
+    installRuntime(stagedDir);
+    await fs.mkdir(path.dirname(mediaPath), { recursive: true });
+    await fs.writeFile(mediaPath, "image");
+    const stagedMediaPath = path.join(stagedDir, "poster.png");
+    await fs.writeFile(
+      scriptPath,
+      `#!/usr/bin/env node
+import fs from "node:fs/promises";
+
+const args = process.argv.slice(2);
+await fs.appendFile(${JSON.stringify(logPath)}, JSON.stringify(args) + "\\n");
+process.stdout.write(JSON.stringify({ msgId: "image-1" }));
+`,
+      { mode: 0o755 },
+    );
+
+    const result = await sendMediaOpenzalo({
+      cfg: {},
+      account: {
+        ...account,
+        zcaBinary: scriptPath,
+      },
+      to: "group:123",
+      mediaUrl: "MEDIA:media/outbound/poster.png",
+    });
+
+    const rawCalls = await fs.readFile(logPath, "utf8");
+    const calls = rawCalls
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[]);
+
+    assert.deepStrictEqual(calls, [
+      ["--profile", "default", "msg", "image", "123", stagedMediaPath, "--group"],
+    ]);
+    assert.equal(result.msgId, "image-1");
+  } finally {
+    if (previousStateDir === undefined) {
+      delete process.env.OPENCLAW_STATE_DIR;
+    } else {
+      process.env.OPENCLAW_STATE_DIR = previousStateDir;
+    }
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("sendMediaOpenzalo resolves mediaAccess workspace relative paths", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openzalo-send-media-access-test-"));
+  const stagedDir = path.join(tempDir, "staged");
+  const workspaceDir = path.join(tempDir, "workspace");
+  const mediaPath = path.join(workspaceDir, "poster.png");
+  const scriptPath = path.join(tempDir, "mock-openzca.mjs");
+  const logPath = path.join(tempDir, "calls.jsonl");
+
+  try {
+    installRuntime(stagedDir);
+    await fs.mkdir(workspaceDir, { recursive: true });
+    await fs.writeFile(mediaPath, "image");
+    const stagedMediaPath = path.join(stagedDir, "poster.png");
+    await fs.writeFile(
+      scriptPath,
+      `#!/usr/bin/env node
+import fs from "node:fs/promises";
+
+const args = process.argv.slice(2);
+await fs.appendFile(${JSON.stringify(logPath)}, JSON.stringify(args) + "\\n");
+process.stdout.write(JSON.stringify({ msgId: "image-1" }));
+`,
+      { mode: 0o755 },
+    );
+
+    const result = await sendMediaOpenzalo({
+      cfg: {},
+      account: {
+        ...account,
+        zcaBinary: scriptPath,
+      },
+      to: "user:123",
+      mediaPath: "poster.png",
+      mediaAccess: {
+        workspaceDir,
+        localRoots: [workspaceDir],
+      },
+    });
+
+    const rawCalls = await fs.readFile(logPath, "utf8");
+    const calls = rawCalls
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[]);
+
+    assert.deepStrictEqual(calls, [["--profile", "default", "msg", "image", "123", stagedMediaPath]]);
+    assert.equal(result.msgId, "image-1");
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
