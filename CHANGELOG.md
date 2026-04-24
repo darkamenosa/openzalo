@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.4.24-2
+
+### Fixed
+
+- Resolved Windows `openzca.cmd` and `zca.cmd` shims to the underlying Node CLI before spawning, preserving spaced Zalo message text as a single argument.
+- Added Windows spawn resolver coverage for global npm, local `.bin`, PATH lookup, and guarded `cmd.exe` fallback cases.
+
 ## 2026.4.24-1
 
 ### Fixed
