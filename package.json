@@ -4,14 +4,17 @@
   "description": "OpenClaw OpenZalo channel plugin (personal account via openzca CLI)",
   "type": "module",
   "scripts": {
+    "build": "esbuild index.ts setup-entry.ts --bundle --platform=node --format=esm --target=node20 --packages=external --outdir=dist",
     "manifest:channel-schema:sync": "node --import tsx ./scripts/sync-manifest-channel-config.ts",
     "manifest:channel-schema:check": "node --import tsx ./scripts/sync-manifest-channel-config.ts --check",
+    "prepack": "npm run build",
     "test": "npm run manifest:channel-schema:check && node --import tsx --test src/*.test.ts src/**/*.test.ts"
   },
   "dependencies": {
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "esbuild": "^0.27.3",
     "tsx": "^4.20.5"
   },
   "peerDependencies": {
@@ -26,7 +29,11 @@
     "extensions": [
       "./index.ts"
     ],
+    "runtimeExtensions": [
+      "./dist/index.js"
+    ],
     "setupEntry": "./setup-entry.ts",
+    "runtimeSetupEntry": "./dist/setup-entry.js",
     "channel": {
       "id": "openzalo",
       "label": "OpenZalo",
