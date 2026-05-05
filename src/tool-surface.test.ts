@@ -43,6 +43,13 @@ test("OpenZalo skill doc prefers DB reads for summaries and history work", async
   assert.match(skillDoc, /--all/i);
 });
 
+test("OpenZalo skill stays available independent of channel enabled config", async () => {
+  const skillDoc = await readRepoFile("skills/openzca/SKILL.md");
+
+  assert.match(skillDoc, /"bins": \["openzca"\]/);
+  assert.doesNotMatch(skillDoc, /channels\.openzalo\.enabled/);
+});
+
 test("OpenZalo docs point native mention member lookup to the openzca skill", async () => {
   const channelSource = await readRepoFile("src/channel.ts");
   const openzcaSkillDoc = await readRepoFile("skills/openzca/SKILL.md");

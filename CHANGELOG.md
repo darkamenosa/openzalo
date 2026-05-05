@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026.5.5
+
+### Added
+
+- Shipped compiled runtime entries (`dist/index.js` and `dist/setup-entry.js`) and package metadata (`runtimeExtensions` and `runtimeSetupEntry`) so installed git/path packages run without TypeScript runtime-output warnings.
+
+### Fixed
+
+- Kept the bundled `openzca` skill available independently of `channels.openzalo.enabled`, preventing `openclaw doctor --fix` from permanently disabling the skill before the channel is enabled.
+
 ## 2026.4.24-2
 
 ### Fixed

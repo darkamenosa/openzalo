@@ -6,7 +6,7 @@ metadata:
     "openclaw":
       {
         "emoji": "🛠️",
-        "requires": { "bins": ["openzca"], "config": ["channels.openzalo.enabled"] },
+        "requires": { "bins": ["openzca"] },
       },
   }
 allowed-tools: ["exec"]
